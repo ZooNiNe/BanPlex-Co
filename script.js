@@ -1574,8 +1574,16 @@ function _addInvoiceItemRow(context = document) {
     const container = $('#invoice-items-container', context);
     if (!container) return;
 
+    // [PERBAIKAN] Cek mode form saat ini (Faktur atau Surat Jalan)
+    const form = container.closest('form');
+    const formType = form.querySelector('input[name="formType"]').value;
+    const isSuratJalan = formType === 'surat_jalan';
+
+    // [PERBAIKAN] Tentukan style dan atribut berdasarkan mode
+    const priceContainerStyle = isSuratJalan ? 'display: none;' : 'display: flex; align-items: center; gap: 0.5rem;';
+    const priceInputRequired = isSuratJalan ? '' : 'required';
+
     const index = container.children.length;
-    // [PERUBAHAN] Tambahkan <span> untuk unit dan wrapper untuk harga
     const itemHTML = `
         <div class="invoice-item-row" data-index="${index}">
             <input type="hidden" name="materialId" required>
@@ -1584,8 +1592,8 @@ function _addInvoiceItemRow(context = document) {
                 <span class="material-symbols-outlined">arrow_drop_down</span>
             </button>
             <div class="item-details">
-                <div class="price-container" style="display: flex; align-items: center; gap: 0.5rem;">
-                    <input type="text" inputmode="numeric" name="itemPrice" placeholder="Harga" class="item-price" required>
+                <div class="price-container" style="${priceContainerStyle}">
+                    <input type="text" inputmode="numeric" name="itemPrice" placeholder="Harga" class="item-price" ${priceInputRequired}>
                     <span>x</span>
                 </div>
                 <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="1" required>
