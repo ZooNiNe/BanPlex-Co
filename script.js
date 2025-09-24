@@ -1445,141 +1445,151 @@ function _attachPengeluaranFormListeners(type) {
     });
 }
 
-    async function handleAddPengeluaran(e, type) {
-        e.preventDefault();
-        const form = e.target;
-        
-        toast('syncing', 'Memvalidasi dan menyimpan...');
-        try {
-            const projectId = form.elements['expense-project']?.value || form.elements['project-id']?.value;
-            if (!projectId) { toast('error', 'Proyek harus dipilih.'); return; }
-
-            const attachmentFile = form.elements.attachmentFileCamera?.files[0] || form.elements.attachmentFileGallery?.files[0];
-            let attachmentUrl = '';
-            
-            if (attachmentFile) {
-            attachmentUrl = await _uploadFileToCloudinary(attachmentFile) || '';
-            }
-    
-            if (type === 'material') {
-                const formType = form.elements.formType.value;
-                const isSuratJalan = formType === 'surat_jalan';
-
-                const items = [];
-                $$('.invoice-item-row', form).forEach(row => {
-                    const materialId = row.querySelector('input[name="materialId"]').value;
-                    const price = isSuratJalan ? 0 : parseFormattedNumber(row.querySelector('input[name="itemPrice"]').value);
-                    const qty = Number(row.querySelector('input[name="itemQty"]').value);
-                    if (materialId && qty > 0) {
-                        if (!isSuratJalan && price <= 0) return;
-                        items.push({ materialId, price, qty, total: price * qty });
-                    }
-                });
-    
-                if (items.length === 0) { toast('error', 'Harap tambahkan minimal satu barang.'); return; }
-    
-                const expenseStatus = isSuratJalan ? 'delivery_order' : (form.querySelector('input[name="status"]').value || 'unpaid');
-                const expenseAmount = isSuratJalan ? 0 : items.reduce((sum, item) => sum + item.total, 0);
-    
-                const expenseData = {
-                    amount: expenseAmount,
-                    description: form.elements['pengeluaran-deskripsi'].value,
-                    supplierId: form.elements['supplier-id'].value,
-                    date: new Date(form.elements['pengeluaran-tanggal'].value),
-                    type: 'material', projectId, items, status: expenseStatus,
-                    attachmentUrl: attachmentUrl,
-                    createdAt: serverTimestamp()
-                };
-                
-                await runTransaction(db, async (transaction) => {
-                    const expenseDocRef = doc(expensesCol);
-                    transaction.set(expenseDocRef, expenseData);
-    
-                    if (!isSuratJalan) {
-                        const billRef = doc(billsCol);
-                        transaction.set(billRef, {
-                            expenseId: expenseDocRef.id, description: expenseData.description, amount: expenseData.amount, 
-                            dueDate: expenseData.date, status: expenseStatus, type: 'material', projectId, 
-                            paidAmount: expenseStatus === 'paid' ? expenseAmount : 0,
-                            ...(expenseStatus === 'paid' && { paidAt: serverTimestamp() }),
-                            createdAt: serverTimestamp()
-                        });
-                    }
-    
-                    for (const item of items) {
-                        const materialRef = doc(materialsCol, item.materialId);
-                        const stockTransRef = doc(stockTransactionsCol);
-                        transaction.update(materialRef, { 
-                            currentStock: increment(item.qty),
-                            usageCount: increment(1) // [PERBAIKAN] Tambahkan penghitung penggunaan
-                        });
-                        if (!isSuratJalan && item.price > 0) {
-                            transaction.update(materialRef, { lastPrice: item.price });
-                        }
-                        transaction.set(stockTransRef, {
-                            materialId: item.materialId, quantity: item.qty, date: Timestamp.fromDate(expenseData.date),
-                            type: 'in', expenseId: expenseDocRef.id, pricePerUnit: item.price,
-                            createdAt: serverTimestamp()
-                        });
-                    }
-                });
-    
-                await _logActivity(`Menambah Faktur Material`, { desc: expenseData.description, status: expenseStatus });
-                toast('success', `Data berhasil disimpan! Stok telah diperbarui.`);
-                       
-            } else { // Logika untuk pengeluaran operasional/lainnya
-               const expenseData = {
-                   amount: parseFormattedNumber(form.elements['pengeluaran-jumlah'].value),
-                   description: form.elements['pengeluaran-deskripsi'].value.trim(),
-                   supplierId: form.elements['expense-supplier'].value,
-                   categoryId: form.elements['expense-category']?.value || '',
-                   date: new Date(form.elements['pengeluaran-tanggal'].value),
-                   type: type, projectId,
-                   attachmentUrl: attachmentUrl 
-               };
-                
-                if (!expenseData.amount || !expenseData.description) {
-                    toast('error', 'Harap isi deskripsi dan jumlah.'); return;
-                }
-    
-                const status = form.querySelector('input[name="status"]').value || 'unpaid';
-                expenseData.status = status;
-                expenseData.createdAt = serverTimestamp();
-    
-                const expenseDocRef = await addDoc(expensesCol, expenseData);
-                await addDoc(billsCol, {
-                    expenseId: expenseDocRef.id, description: expenseData.description, amount: expenseData.amount,
-                    dueDate: expenseData.date, status: expenseData.status, type: expenseData.type,
-                    projectId: expenseData.projectId, createdAt: serverTimestamp(),
-                    paidAmount: status === 'paid' ? expenseData.amount : 0,
-                    ...(status === 'paid' && { paidAt: serverTimestamp() })
-                });
-                
-                await _logActivity(`Menambah Pengeluaran: ${expenseData.description}`, { docId: expenseDocRef.id, status });
-                toast('success', 'Pengeluaran berhasil disimpan!');
-            }
-    
-            form.reset();
-            $$('.file-name-display').forEach(el => el.textContent = 'Belum ada file dipilih');
-            handleNavigation('tagihan');
-    
-        } catch (error) {
-            toast('error', 'Gagal menyimpan data.');
-            console.error("Error saving expense:", error);
-        }
-    }
-
 // GANTI SELURUH FUNGSI INI
+async function handleAddPengeluaran(e, type) {
+    e.preventDefault();
+    const form = e.target;
+    
+    toast('syncing', 'Memvalidasi dan menyimpan...');
+    try {
+        const projectId = form.elements['expense-project']?.value || form.elements['project-id']?.value;
+        if (!projectId) { toast('error', 'Proyek harus dipilih.'); return; }
+
+        const attachmentFile = form.elements.attachmentFileCamera?.files[0] || form.elements.attachmentFileGallery?.files[0];
+
+        if (type === 'material') {
+            const formType = form.elements.formType.value;
+            const isSuratJalan = formType === 'surat_jalan';
+
+            let invoiceUrl = '';
+            let deliveryOrderUrl = '';
+            if (attachmentFile) {
+                const uploadedUrl = await _uploadFileToCloudinary(attachmentFile) || '';
+                if (isSuratJalan) {
+                    deliveryOrderUrl = uploadedUrl;
+                } else {
+                    invoiceUrl = uploadedUrl;
+                }
+            }
+
+            const items = [];
+            $$('.invoice-item-row', form).forEach(row => {
+                const materialId = row.querySelector('input[name="materialId"]').value;
+                const price = isSuratJalan ? 0 : parseFormattedNumber(row.querySelector('input[name="itemPrice"]').value);
+                const qty = Number(row.querySelector('input[name="itemQty"]').value);
+                if (materialId && qty > 0) {
+                    if (!isSuratJalan && price <= 0) return;
+                    items.push({ materialId, price, qty, total: price * qty });
+                }
+            });
+
+            if (items.length === 0) { toast('error', 'Harap tambahkan minimal satu barang.'); return; }
+
+            const expenseStatus = isSuratJalan ? 'delivery_order' : (form.querySelector('input[name="status"]').value || 'unpaid');
+            const expenseAmount = isSuratJalan ? 0 : items.reduce((sum, item) => sum + item.total, 0);
+
+            const expenseData = {
+                amount: expenseAmount,
+                description: form.elements['pengeluaran-deskripsi'].value,
+                supplierId: form.elements['supplier-id'].value,
+                date: new Date(form.elements['pengeluaran-tanggal'].value),
+                type: 'material', projectId, items, status: expenseStatus,
+                invoiceUrl, // [PERUBAHAN] Menggunakan variabel yang benar
+                deliveryOrderUrl, // [PERUBAHAN] Menggunakan variabel yang benar
+                createdAt: serverTimestamp()
+            };
+            
+            await runTransaction(db, async (transaction) => {
+                const expenseDocRef = doc(expensesCol);
+                transaction.set(expenseDocRef, expenseData);
+
+                if (!isSuratJalan) {
+                    const billRef = doc(billsCol);
+                    transaction.set(billRef, {
+                        expenseId: expenseDocRef.id, description: expenseData.description, amount: expenseData.amount, 
+                        dueDate: expenseData.date, status: expenseStatus, type: 'material', projectId, 
+                        paidAmount: expenseStatus === 'paid' ? expenseAmount : 0,
+                        ...(expenseStatus === 'paid' && { paidAt: serverTimestamp() }),
+                        createdAt: serverTimestamp()
+                    });
+                }
+
+                for (const item of items) {
+                    const materialRef = doc(materialsCol, item.materialId);
+                    const stockTransRef = doc(stockTransactionsCol);
+                    transaction.update(materialRef, { 
+                        currentStock: increment(item.qty),
+                        usageCount: increment(1)
+                    });
+                    if (!isSuratJalan && item.price > 0) {
+                        transaction.update(materialRef, { lastPrice: item.price });
+                    }
+                    transaction.set(stockTransRef, {
+                        materialId: item.materialId, quantity: item.qty, date: Timestamp.fromDate(expenseData.date),
+                        type: 'in', expenseId: expenseDocRef.id, pricePerUnit: item.price,
+                        createdAt: serverTimestamp()
+                    });
+                }
+            });
+
+            await _logActivity(`Menambah Faktur Material`, { desc: expenseData.description, status: expenseStatus });
+            toast('success', `Data berhasil disimpan! Stok telah diperbarui.`);
+                   
+        } else { // Logika untuk pengeluaran operasional/lainnya
+           let attachmentUrl = '';
+           if (attachmentFile) {
+              attachmentUrl = await _uploadFileToCloudinary(attachmentFile) || '';
+           }
+
+           const expenseData = {
+               amount: parseFormattedNumber(form.elements['pengeluaran-jumlah'].value),
+               description: form.elements['pengeluaran-deskripsi'].value.trim(),
+               supplierId: form.elements['expense-supplier'].value,
+               categoryId: form.elements['expense-category']?.value || '',
+               date: new Date(form.elements['pengeluaran-tanggal'].value),
+               type: type, projectId,
+               attachmentUrl: attachmentUrl
+           };
+            
+            if (!expenseData.amount || !expenseData.description) {
+                toast('error', 'Harap isi deskripsi dan jumlah.'); return;
+            }
+
+            const status = form.querySelector('input[name="status"]').value || 'unpaid';
+            expenseData.status = status;
+            expenseData.createdAt = serverTimestamp();
+
+            const expenseDocRef = await addDoc(expensesCol, expenseData);
+            await addDoc(billsCol, {
+                expenseId: expenseDocRef.id, description: expenseData.description, amount: expenseData.amount,
+                dueDate: expenseData.date, status: expenseData.status, type: expenseData.type,
+                projectId: expenseData.projectId, createdAt: serverTimestamp(),
+                paidAmount: status === 'paid' ? expenseData.amount : 0,
+                ...(status === 'paid' && { paidAt: serverTimestamp() })
+            });
+            
+            await _logActivity(`Menambah Pengeluaran: ${expenseData.description}`, { docId: expenseDocRef.id, status });
+            toast('success', 'Pengeluaran berhasil disimpan!');
+        }
+
+        form.reset();
+        $$('.file-name-display').forEach(el => el.textContent = 'Belum ada file dipilih');
+        handleNavigation('tagihan');
+
+    } catch (error) {
+        toast('error', 'Gagal menyimpan data.');
+        console.error("Error saving expense:", error);
+    }
+}
+
 function _addInvoiceItemRow(context = document) {
     const container = $('#invoice-items-container', context);
     if (!container) return;
 
-    // [PERBAIKAN] Cek mode form saat ini (Faktur atau Surat Jalan)
     const form = container.closest('form');
     const formType = form.querySelector('input[name="formType"]').value;
     const isSuratJalan = formType === 'surat_jalan';
 
-    // [PERBAIKAN] Tentukan style dan atribut berdasarkan mode
     const priceContainerStyle = isSuratJalan ? 'display: none;' : 'display: flex; align-items: center; gap: 0.5rem;';
     const priceInputRequired = isSuratJalan ? '' : 'required';
 
@@ -1596,7 +1606,7 @@ function _addInvoiceItemRow(context = document) {
                     <input type="text" inputmode="numeric" name="itemPrice" placeholder="Harga" class="item-price" ${priceInputRequired}>
                     <span>x</span>
                 </div>
-                <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="1" required>
+                <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="" required min="0.01" step="any">
                 <span class="item-unit" style="margin-left: 0.25rem;"></span>
             </div>
             <span class="item-total">Rp 0</span>
