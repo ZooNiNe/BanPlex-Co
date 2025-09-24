@@ -1381,68 +1381,69 @@ function _getFormPengeluaranHTML(type, categoryOptions, categoryMasterType, cate
         `;
     }
 
-    function _attachPengeluaranFormListeners(type) {
-        _initCustomSelects();
-        const form = (type === 'material') ? $('#material-invoice-form') : $('#pengeluaran-form');
-        if (!form) return;
+// GANTI SELURUH FUNGSI INI
+function _attachPengeluaranFormListeners(type) {
+    _initCustomSelects();
+    const form = (type === 'material') ? $('#material-invoice-form') : $('#pengeluaran-form');
+    if (!form) return;
 
-        form.querySelectorAll('.btn-status-payment').forEach(btn => {
-            btn.addEventListener('click', () => {
-                form.querySelectorAll('.btn-status-payment').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                if (form.querySelector('input[name="status"]')) {
-                    form.querySelector('input[name="status"]').value = btn.dataset.status;
-                }
-            });
+    form.querySelectorAll('.btn-status-payment').forEach(btn => {
+        btn.addEventListener('click', () => {
+            form.querySelectorAll('.btn-status-payment').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            if (form.querySelector('input[name="status"]')) {
+                form.querySelector('input[name="status"]').value = btn.dataset.status;
+            }
         });
+    });
 
-        if (type === 'material') {
-            $('#add-invoice-item-btn')?.addEventListener('click', () => _addInvoiceItemRow());
-            $('#invoice-items-container')?.addEventListener('input', (e) => _handleInvoiceItemChange(e));
-            
-            // Logika baru untuk tombol opsi Faktur/Surat Jalan
-            $('#form-type-selector')?.addEventListener('click', (e) => {
-                const btn = e.target.closest('.form-type-btn');
-                if (!btn) return;
-                
-                $$('#form-type-selector .form-type-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-                
-                const formType = btn.dataset.type;
-                const isSuratJalan = formType === 'surat_jalan';
-                
-                form.querySelector('input[name="formType"]').value = formType;
-                $('#total-faktur-wrapper').style.display = isSuratJalan ? 'none' : 'flex';
-                $('#payment-status-wrapper').style.display = isSuratJalan ? 'none' : 'block';
-                $('#attachment-label').textContent = isSuratJalan ? 'Upload Bukti Surat Jalan' : 'Upload Bukti Faktur';
-                
-                $$('.invoice-item-row').forEach(row => {
-                    const priceInput = row.querySelector('.item-price');
-                    const totalSpan = row.querySelector('.item-total');
-                    priceInput.required = !isSuratJalan;
-                    priceInput.closest('.item-details').style.display = isSuratJalan ? 'none' : 'flex';
-                    if(isSuratJalan) priceInput.value = '';
-                });
-                _updateInvoiceTotal();
-            });
-            
-            if ($$('#invoice-items-container .invoice-item-row').length === 0) {
-                _addInvoiceItemRow();
-            }
-
-            const invoiceNumberInput = $('#pengeluaran-deskripsi');
-            if (invoiceNumberInput) {
-                invoiceNumberInput.value = _generateInvoiceNumber();
-            }
-        } else {
-            $('#pengeluaran-jumlah')?.addEventListener('input', _formatNumberInput);
-        }
+    if (type === 'material') {
+        $('#add-invoice-item-btn')?.addEventListener('click', () => _addInvoiceItemRow());
+        $('#invoice-items-container')?.addEventListener('input', (e) => _handleInvoiceItemChange(e));
         
-        form.addEventListener('submit', (e) => {
-            e.preventDefault();
-            handleAddPengeluaran(e, type);
+        // [PERUBAHAN] Logika toggle Surat Jalan yang diperbaiki
+        $('#form-type-selector')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('.form-type-btn');
+            if (!btn) return;
+            
+            $$('#form-type-selector .form-type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            const formType = btn.dataset.type;
+            const isSuratJalan = formType === 'surat_jalan';
+            
+            form.querySelector('input[name="formType"]').value = formType;
+            $('#total-faktur-wrapper').style.display = isSuratJalan ? 'none' : 'flex';
+            $('#payment-status-wrapper').style.display = isSuratJalan ? 'none' : 'block';
+            $('#attachment-label').textContent = isSuratJalan ? 'Upload Bukti Surat Jalan' : 'Upload Bukti Faktur';
+            
+            $$('.invoice-item-row').forEach(row => {
+                const priceInput = row.querySelector('.item-price');
+                const priceContainer = row.querySelector('.price-container');
+                priceContainer.style.display = isSuratJalan ? 'none' : 'flex';
+                priceInput.required = !isSuratJalan;
+                if(isSuratJalan) priceInput.value = '';
+            });
+            _updateInvoiceTotal();
         });
+        
+        if ($$('#invoice-items-container .invoice-item-row').length === 0) {
+            _addInvoiceItemRow();
+        }
+
+        const invoiceNumberInput = $('#pengeluaran-deskripsi');
+        if (invoiceNumberInput) {
+            invoiceNumberInput.value = _generateInvoiceNumber();
+        }
+    } else {
+        $('#pengeluaran-jumlah')?.addEventListener('input', _formatNumberInput);
     }
+    
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        handleAddPengeluaran(e, type);
+    });
+}
 
     async function handleAddPengeluaran(e, type) {
         e.preventDefault();
@@ -1568,40 +1569,43 @@ function _getFormPengeluaranHTML(type, categoryOptions, categoryMasterType, cate
         }
     }
 
-    function _addInvoiceItemRow(context = document) {
-        const container = $('#invoice-items-container', context);
-        if (!container) return;
+// GANTI SELURUH FUNGSI INI
+function _addInvoiceItemRow(context = document) {
+    const container = $('#invoice-items-container', context);
+    if (!container) return;
 
-        const index = container.children.length;
-        const itemHTML = `
-            <div class="invoice-item-row" data-index="${index}">
-                
-                <input type="hidden" name="materialId" required>
-                <button type="button" class="custom-select-trigger" data-action="open-material-selector" data-index="${index}">
-                    <span>Pilih Material...</span>
-                    <span class="material-symbols-outlined">arrow_drop_down</span>
-                </button>
-                
-                <div class="item-details">
+    const index = container.children.length;
+    // [PERUBAHAN] Tambahkan <span> untuk unit dan wrapper untuk harga
+    const itemHTML = `
+        <div class="invoice-item-row" data-index="${index}">
+            <input type="hidden" name="materialId" required>
+            <button type="button" class="custom-select-trigger" data-action="open-material-selector" data-index="${index}">
+                <span>Pilih Material...</span>
+                <span class="material-symbols-outlined">arrow_drop_down</span>
+            </button>
+            <div class="item-details">
+                <div class="price-container" style="display: flex; align-items: center; gap: 0.5rem;">
                     <input type="text" inputmode="numeric" name="itemPrice" placeholder="Harga" class="item-price" required>
                     <span>x</span>
-                    <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="1" required>
                 </div>
-                <span class="item-total">Rp 0</span>
-                <button type="button" class="btn-icon btn-icon-danger remove-item-btn"><span class="material-symbols-outlined">delete</span></button>
+                <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="1" required>
+                <span class="item-unit" style="margin-left: 0.25rem;"></span>
             </div>
-        `;
-        container.insertAdjacentHTML('beforeend', itemHTML);
-        const newRow = container.lastElementChild;
+            <span class="item-total">Rp 0</span>
+            <button type="button" class="btn-icon btn-icon-danger remove-item-btn"><span class="material-symbols-outlined">delete</span></button>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', itemHTML);
+    const newRow = container.lastElementChild;
 
-        newRow.querySelector('.remove-item-btn').addEventListener('click', () => {
-            newRow.remove();
-            _updateInvoiceTotal(context);
-        });
-        newRow.querySelectorAll('input[inputmode="numeric"]').forEach(input => {
-            input.addEventListener('input', _formatNumberInput);
-        });
-    }
+    newRow.querySelector('.remove-item-btn').addEventListener('click', () => {
+        newRow.remove();
+        _updateInvoiceTotal(context);
+    });
+    newRow.querySelectorAll('input[inputmode="numeric"]').forEach(input => {
+        input.addEventListener('input', _formatNumberInput);
+    });
+}
 
     function _handleInvoiceItemChange(e, context = document) {
         if (!e.target.matches('.item-price, .item-qty')) return;
@@ -1632,76 +1636,66 @@ function _getFormPengeluaranHTML(type, categoryOptions, categoryMasterType, cate
         return `INV/${year}${month}${day}/${randomPart}`;
     }
 
-    async function handleOpenMaterialSelector(dataset) {
-        const { index } = dataset;
+// GANTI SELURUH FUNGSI INI
+async function handleOpenMaterialSelector(dataset) {
+    const { index } = dataset;
 
-        const sortedMaterials = [...appState.materials].sort((a, b) => {
-            const countA = a.usageCount || 0;
-            const countB = b.usageCount || 0;
-            if (countB !== countA) {
-                return countB - countA; // Urutkan berdasarkan usageCount (terbanyak)
-            }
-            return a.materialName.localeCompare(b.materialName); // Jika sama, urutkan berdasarkan nama
-        });
+    const sortedMaterials = [...appState.materials].sort((a, b) => {
+        const countA = a.usageCount || 0;
+        const countB = b.usageCount || 0;
+        if (countB !== countA) {
+            return countB - countA;
+        }
+        return a.materialName.localeCompare(b.materialName);
+    });
 
-        const renderList = (items) => items.map(mat => `
-            <div class="material-list-item" data-id="${mat.id}" data-name="${mat.materialName}" data-unit="${mat.unit}">
-                <div class="item-info">
-                    <strong>${mat.materialName}</strong>
-                    <span>Satuan: ${mat.unit}</span>
-                </div>
-                <div class="item-stock">Stok: ${mat.currentStock || 0}</div>
+    const renderList = (items) => items.map(mat => `
+        <div class="material-list-item" data-id="${mat.id}" data-name="${mat.materialName}" data-unit="${mat.unit || ''}">
+            <div class="item-info">
+                <strong>${mat.materialName}</strong>
+                <span>Satuan: ${mat.unit || 'N/A'}</span>
             </div>
-        `).join('');
+            <div class="item-stock">Stok: ${mat.currentStock || 0}</div>
+        </div>
+    `).join('');
 
-        const modalHeader = `
-            <h4>Pilih Material</h4>
-            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
-        `;
-        const searchBar = `
-            <div class="modal-search-bar">
-                <div class="search">
-                    <span class="material-symbols-outlined">search</span>
-                    <input type="search" id="material-search-input" placeholder="Cari nama material...">
-                </div>
-            </div>
-        `;
-        const modalBody = `<div class="material-list" id="material-list-container">${renderList(sortedMaterials)}</div>`;
-        const modalContent = `
-            <div class="modal-content"><div class="modal-header">${modalHeader}</div>${searchBar}<div class="modal-body">${modalBody}</div></div>`;
-        
-        const modalContainer = $('#modal-container');
-        modalContainer.innerHTML = `<div id="materialSelectorModal" class="modal-bg material-selector-modal">${modalContent}</div>`;
-        
-        const modalEl = $('#materialSelectorModal');
-        setTimeout(() => modalEl.classList.add('show'), 10);
+    const modalHeader = `<h4>Pilih Material</h4><button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>`;
+    const searchBar = `<div class="modal-search-bar"><div class="search"><span class="material-symbols-outlined">search</span><input type="search" id="material-search-input" placeholder="Cari nama material..."></div></div>`;
+    const modalBody = `<div class="material-list" id="material-list-container">${renderList(sortedMaterials)}</div>`;
+    const modalContent = `<div class="modal-content"><div class="modal-header">${modalHeader}</div>${searchBar}<div class="modal-body">${modalBody}</div></div>`;
+    
+    const modalContainer = $('#modal-container');
+    modalContainer.innerHTML = `<div id="materialSelectorModal" class="modal-bg material-selector-modal">${modalContent}</div>`;
+    
+    const modalEl = $('#materialSelectorModal');
+    setTimeout(() => modalEl.classList.add('show'), 10);
 
-        const closeModalFunc = () => closeModal(modalEl);
-        modalEl.addEventListener('click', e => { if (e.target === modalEl) closeModalFunc(); });
-        modalEl.querySelectorAll('[data-close-modal]').forEach(btn => btn.addEventListener('click', closeModalFunc));
+    const closeModalFunc = () => closeModal(modalEl);
+    modalEl.addEventListener('click', e => { if (e.target === modalEl) closeModalFunc(); });
+    modalEl.querySelectorAll('[data-close-modal]').forEach(btn => btn.addEventListener('click', closeModalFunc));
 
-        $('#material-list-container').addEventListener('click', e => {
-            const itemEl = e.target.closest('.material-list-item');
-            if (!itemEl) return;
+    $('#material-list-container', modalEl).addEventListener('click', e => {
+        const itemEl = e.target.closest('.material-list-item');
+        if (!itemEl) return;
 
-            const { id, name } = itemEl.dataset;
-            const triggerButton = $(`button[data-action="open-material-selector"][data-index="${index}"]`);
-            const hiddenInput = triggerButton.previousElementSibling;
+        const { id, name, unit } = itemEl.dataset;
+        const row = $(`#material-invoice-form .invoice-item-row[data-index="${index}"]`) || $(`#edit-item-form .invoice-item-row[data-index="${index}"]`);
 
-            if (triggerButton && hiddenInput) {
-                hiddenInput.value = id;
-                triggerButton.querySelector('span').textContent = name;
-                triggerButton.classList.add('selected');
-            }
-            closeModalFunc();
-        });
+        if (row) {
+            // [PERUBAHAN] Update input tersembunyi, teks tombol, DAN teks satuan
+            row.querySelector('input[name="materialId"]').value = id;
+            row.querySelector('.custom-select-trigger span').textContent = name;
+            row.querySelector('.item-unit').textContent = unit || '';
+        }
+        closeModalFunc();
+    });
 
-        $('#material-search-input').addEventListener('input', e => {
-            const searchTerm = e.target.value.toLowerCase();
-            const filtered = sortedMaterials.filter(mat => mat.materialName.toLowerCase().includes(searchTerm));
-            $('#material-list-container').innerHTML = renderList(filtered);
-        });
-    }
+    $('#material-search-input', modalEl).addEventListener('input', e => {
+        const searchTerm = e.target.value.toLowerCase();
+        const filtered = sortedMaterials.filter(mat => mat.materialName.toLowerCase().includes(searchTerm));
+        $('#material-list-container', modalEl).innerHTML = renderList(filtered);
+    });
+}
 
     async function renderStokPage() {
         const container = $('.page-container');
@@ -5219,18 +5213,17 @@ function _attachStaffFormListeners(modal) {
     toggleFields(); 
 }
     // --- SUB-SEKSI 3.7: FUNGSI CRUD (CREATE, READ, UPDATE, DELETE) ---
+// GANTI SELURUH FUNGSI INI
 async function handleManageMasterData(type) {
     const config = masterDataConfig[type];
     if (!config) return;
 
-    // Fetch semua data yang mungkin dibutuhkan oleh form
     await Promise.all([
         fetchAndCacheData(config.stateKey, config.collection, config.nameField),
         fetchAndCacheData('professions', professionsCol, 'professionName'),
         fetchAndCacheData('projects', projectsCol, 'projectName')
     ]);
 
-    // Helper untuk membuat konten item di dalam daftar
     const getListItemContent = (item, type) => {
         let content = `<span>${item[config.nameField]}</span>`;
         if (type === 'suppliers' && item.category) {
@@ -5240,10 +5233,13 @@ async function handleManageMasterData(type) {
             if (item.projectType === 'main_income') content += `<span class="category-badge category-main">Utama</span>`;
             else if (item.projectType === 'internal_expense') content += `<span class="category-badge category-internal">Internal</span>`;
         }
+        // [PERUBAHAN] Tampilkan satuan di daftar master material
+        if (type === 'materials' && item.unit) {
+            content += `<span class="category-badge">${item.unit}</span>`;
+        }
         return `<div class="master-data-item-info">${content}</div>`;
     };
 
-    // Buat daftar HTML dari data yang sudah ada
     const listHTML = appState[config.stateKey].map(item => `
         <div class="master-data-item" data-id="${item.id}" data-type="${type}">
             ${getListItemContent(item, type)}
@@ -5254,34 +5250,15 @@ async function handleManageMasterData(type) {
         </div>
     `).join('');
 
-    // Buat field form input secara dinamis berdasarkan tipenya
-    let formFieldsHTML = `
-        <div class="form-group">
-           <label>Nama ${config.title}</label>
-           <input type="text" name="itemName" placeholder="Masukkan nama..." required>
-        </div>
-    `;
+    let formFieldsHTML = `<div class="form-group"><label>Nama ${config.title}</label><input type="text" name="itemName" placeholder="Masukkan nama..." required></div>`;
 
     if (type === 'staff') {
-        const paymentTypeOptions = [
-            { value: 'fixed_monthly', text: 'Gaji Bulanan Tetap' },
-            { value: 'per_termin', text: 'Fee per Termin (%)' },
-            { value: 'fixed_per_termin', text: 'Fee Tetap per Termin' }
-        ];
+        const paymentTypeOptions = [ { value: 'fixed_monthly', text: 'Gaji Bulanan Tetap' }, { value: 'per_termin', text: 'Fee per Termin (%)' }, { value: 'fixed_per_termin', text: 'Fee Tetap per Termin' } ];
         formFieldsHTML += `
             ${createMasterDataSelect('paymentType', 'Tipe Pembayaran', paymentTypeOptions, 'fixed_monthly')}
-            <div class="form-group" id="staff-salary-group">
-                <label>Gaji Bulanan</label>
-                <input type="text" inputmode="numeric" name="salary" placeholder="mis. 5.000.000">
-            </div>
-            <div class="form-group hidden" id="staff-fee-percent-group">
-                <label>Persentase Fee (%)</label>
-                <input type="number" name="feePercentage" placeholder="mis. 5 untuk 5%">
-            </div>
-            <div class="form-group hidden" id="staff-fee-amount-group">
-                <label>Jumlah Fee Tetap</label>
-                <input type="text" inputmode="numeric" name="feeAmount" placeholder="mis. 10.000.000">
-            </div>
+            <div class="form-group" id="staff-salary-group"><label>Gaji Bulanan</label><input type="text" inputmode="numeric" name="salary" placeholder="mis. 5.000.000"></div>
+            <div class="form-group hidden" id="staff-fee-percent-group"><label>Persentase Fee (%)</label><input type="number" name="feePercentage" placeholder="mis. 5 untuk 5%"></div>
+            <div class="form-group hidden" id="staff-fee-amount-group"><label>Jumlah Fee Tetap</label><input type="text" inputmode="numeric" name="feeAmount" placeholder="mis. 10.000.000"></div>
         `;
     }
     if (type === 'suppliers') {
@@ -5289,73 +5266,55 @@ async function handleManageMasterData(type) {
         formFieldsHTML += createMasterDataSelect('itemCategory', 'Kategori Supplier', categoryOptions);
     }
     if (type === 'projects') {
-        // [PERUBAHAN DI SINI] Menambahkan dropdown untuk jenis proyek
         const projectTypeOptions = [ { value: 'main_income', text: 'Pemasukan Utama' }, { value: 'internal_expense', text: 'Biaya Internal (Beban)' } ];
-        formFieldsHTML += `
-            <div class="form-group">
-                <label>Anggaran Proyek</label>
-                <input type="text" inputmode="numeric" name="budget" placeholder="mis. 100.000.000">
-            </div>
-            ${createMasterDataSelect('projectType', 'Jenis Proyek', projectTypeOptions, 'main_income')}
-        `;
+        formFieldsHTML += `<div class="form-group"><label>Anggaran Proyek</label><input type="text" inputmode="numeric" name="budget" placeholder="mis. 100.000.000"></div>${createMasterDataSelect('projectType', 'Jenis Proyek', projectTypeOptions, 'main_income')}`;
     }
     if (type === 'workers') {
         const professionOptions = appState.professions.map(p => ({ value: p.id, text: p.professionName }));
-        const projectFieldsHTML = appState.projects.map(p => `
-            <div class="form-group">
-                <label>Upah Harian - ${p.projectName}</label>
-                <input type="text" inputmode="numeric" name="project_wage_${p.id}" placeholder="mis. 150.000">
-            </div>
-        `).join('');
+        const projectFieldsHTML = appState.projects.map(p => `<div class="form-group"><label>Upah Harian - ${p.projectName}</label><input type="text" inputmode="numeric" name="project_wage_${p.id}" placeholder="mis. 150.000"></div>`).join('');
         const statusOptions = [ { value: 'active', text: 'Aktif' }, { value: 'inactive', text: 'Tidak Aktif' } ];
+        formFieldsHTML += `${createMasterDataSelect('professionId', 'Profesi', professionOptions, '', 'professions')}${createMasterDataSelect('workerStatus', 'Status', statusOptions, 'active')}<h5 class="invoice-section-title">Upah Harian per Proyek</h5>${projectFieldsHTML || '<p class="empty-state-small">Belum ada proyek.</p>'}`;
+    }
+    // [PERUBAHAN] Tambahkan input untuk 'Satuan' dan 'Titik Pemesanan' di form
+    if (type === 'materials') {
         formFieldsHTML += `
-            ${createMasterDataSelect('professionId', 'Profesi', professionOptions, '', 'professions')}
-            ${createMasterDataSelect('workerStatus', 'Status', statusOptions, 'active')}
-            <h5 class="invoice-section-title">Upah Harian per Proyek</h5>
-            ${projectFieldsHTML || '<p class="empty-state-small">Belum ada proyek. Tambahkan proyek terlebih dahulu.</p>'}
+            <div class="form-group"><label>Satuan</label><input type="text" name="unit" placeholder="mis. sak, m3, btg" required></div>
+            <div class="form-group"><label>Titik Pemesanan Ulang</label><input type="number" name="reorderPoint" placeholder="Stok minimum sebelum notifikasi" value="0" required></div>
         `;
     }
 
-    // Gabungkan form dan daftar menjadi satu konten modal
     const content = `
         <div class="master-data-manager" data-type="${type}">
-            <form id="add-master-item-form" data-type="${type}">
-                ${formFieldsHTML}
-                <button type="submit" class="btn btn-primary">Tambah</button>
-            </form>
-            <div class="master-data-list">
-                ${appState[config.stateKey].length > 0 ? listHTML : '<p class="empty-state-small">Belum ada data.</p>'}
-            </div>
+            <form id="add-master-item-form" data-type="${type}">${formFieldsHTML}<button type="submit" class="btn btn-primary">Tambah</button></form>
+            <div class="master-data-list">${appState[config.stateKey].length > 0 ? listHTML : '<p class="empty-state-small">Belum ada data.</p>'}</div>
         </div>
     `;
 
-    // Buat modal dan tangkap elemennya
     const modalEl = createModal('manageMaster', { 
-        title: `Kelola ${config.title}`, 
-        content,
+        title: `Kelola ${config.title}`, content,
         onClose: () => {
             const page = appState.activePage;
-            if (page === 'pemasukan') renderPemasukanPage();
-            else if (page === 'pengeluaran') renderPengeluaranPage();
-            else if (page === 'absensi') renderAbsensiPage();
+            if (['pemasukan', 'pengeluaran', 'absensi'].includes(page)) {
+                // Panggil fungsi render yang sesuai untuk merefresh data
+                window[`render${page.charAt(0).toUpperCase() + page.slice(1)}Page`]();
+            }
         }
     });
 
-    // Pasang event listener ke form yang ada di dalam modal
     if (type === 'staff' && modalEl) {
         _attachStaffFormListeners(modalEl);
         $('input[name="feeAmount"]', modalEl)?.addEventListener('input', _formatNumberInput);
         $('input[name="salary"]', modalEl)?.addEventListener('input', _formatNumberInput);
     }
 }
-// GANTI SELURUH FUNGSI INI di script.js
+
+// GANTI SELURUH FUNGSI INI
 async function handleAddMasterItem(form) {
     const type = form.dataset.type;
     const config = masterDataConfig[type];
     const itemName = form.elements.itemName.value.trim();
     if (!config || !itemName) return;
 
-    // Siapkan data yang akan ditambahkan
     const dataToAdd = { [config.nameField]: itemName, createdAt: serverTimestamp() };
     if (type === 'staff') {
         dataToAdd.paymentType = form.elements.paymentType.value;
@@ -5377,12 +5336,17 @@ async function handleAddMasterItem(form) {
             if (wage > 0) dataToAdd.projectWages[p.id] = wage;
         });
     }
-    
-    toast('syncing', `Menambah ${config.title}...`);
+    if (type === 'materials') {
+        dataToAdd.unit = form.elements.unit.value.trim();
+        dataToAdd.reorderPoint = Number(form.elements.reorderPoint.value) || 0;
+        dataToAdd.currentStock = 0;
+        dataToAdd.lastPrice = 0;
+        dataToAdd.usageCount = 0;
+    }
 
+    toast('syncing', `Menambah ${config.title}...`);
     try {
         const newDocRef = doc(config.collection);
-
         if (type === 'projects' && dataToAdd.projectType === 'main_income') {
             await runTransaction(db, async (transaction) => {
                 const q = query(projectsCol, where("projectType", "==", "main_income"));
@@ -5395,19 +5359,18 @@ async function handleAddMasterItem(form) {
         } else {
             await setDoc(newDocRef, dataToAdd);
         }
-
         await _logActivity(`Menambah Master Data: ${config.title}`, { name: itemName });
         toast('success', `${config.title} baru berhasil ditambahkan.`);
         form.reset();
         $$('.custom-select-trigger span:first-child', form).forEach(s => s.textContent = 'Pilih...');
-        await handleManageMasterData(type); 
-
+        await handleManageMasterData(type);
     } catch (error) {
         toast('error', `Gagal menambah ${config.title}.`);
         console.error(error);
     }
 }
 
+// GANTI SELURUH FUNGSI INI
 function handleEditMasterItem(id, type) {
     const config = masterDataConfig[type];
     if (!config) return;
@@ -5417,110 +5380,65 @@ function handleEditMasterItem(id, type) {
         return;
     }
 
-    // Siapkan field form input secara dinamis berdasarkan tipenya
-    let formFieldsHTML = `
-        <div class="form-group">
-            <label>Nama ${config.title}</label>
-            <input type="text" name="itemName" value="${item[config.nameField]}" required>
-        </div>
-    `;
+    let formFieldsHTML = `<div class="form-group"><label>Nama ${config.title}</label><input type="text" name="itemName" value="${item[config.nameField]}" required></div>`;
 
     if (type === 'staff') {
-        const paymentTypeOptions = [
-            { value: 'fixed_monthly', text: 'Gaji Bulanan Tetap' },
-            { value: 'per_termin', text: 'Fee per Termin (%)' },
-            { value: 'fixed_per_termin', text: 'Fee Tetap per Termin' }
-        ];
-        formFieldsHTML += `
-            ${createMasterDataSelect('paymentType', 'Tipe Pembayaran', paymentTypeOptions, item.paymentType || 'fixed_monthly')}
-            <div class="form-group" id="staff-salary-group">
-                <label>Gaji Bulanan</label>
-                <input type="text" inputmode="numeric" name="salary" value="${item.salary ? new Intl.NumberFormat('id-ID').format(item.salary) : ''}">
-            </div>
-            <div class="form-group hidden" id="staff-fee-percent-group">
-                <label>Persentase Fee (%)</label>
-                <input type="number" name="feePercentage" value="${item.feePercentage || ''}">
-            </div>
-            <div class="form-group hidden" id="staff-fee-amount-group">
-                <label>Jumlah Fee Tetap</label>
-                <input type="text" inputmode="numeric" name="feeAmount" value="${item.feeAmount ? new Intl.NumberFormat('id-ID').format(item.feeAmount) : ''}">
-            </div>
-        `;
+        const paymentTypeOptions = [ { value: 'fixed_monthly', text: 'Gaji Bulanan Tetap' }, { value: 'per_termin', text: 'Fee per Termin (%)' }, { value: 'fixed_per_termin', text: 'Fee Tetap per Termin' } ];
+        formFieldsHTML += `${createMasterDataSelect('paymentType', 'Tipe Pembayaran', paymentTypeOptions, item.paymentType || 'fixed_monthly')}
+            <div class="form-group" id="staff-salary-group"><label>Gaji Bulanan</label><input type="text" inputmode="numeric" name="salary" value="${item.salary ? new Intl.NumberFormat('id-ID').format(item.salary) : ''}"></div>
+            <div class="form-group hidden" id="staff-fee-percent-group"><label>Persentase Fee (%)</label><input type="number" name="feePercentage" value="${item.feePercentage || ''}"></div>
+            <div class="form-group hidden" id="staff-fee-amount-group"><label>Jumlah Fee Tetap</label><input type="text" inputmode="numeric" name="feeAmount" value="${item.feeAmount ? new Intl.NumberFormat('id-ID').format(item.feeAmount) : ''}"></div>`;
     }
     if (type === 'suppliers') {
         const categoryOptions = [ { value: 'Operasional', text: 'Operasional' }, { value: 'Material', text: 'Material' }, { value: 'Lainnya', text: 'Lainnya' }, ];
         formFieldsHTML += createMasterDataSelect('itemCategory', 'Kategori Supplier', categoryOptions, item.category || 'Operasional');
     }
     if (type === 'projects') {
-        // [PERUBAHAN DI SINI] Menambahkan dropdown untuk jenis proyek saat edit
         const projectTypeOptions = [ { value: 'main_income', text: 'Pemasukan Utama' }, { value: 'internal_expense', text: 'Biaya Internal (Beban)' } ];
         const budget = item.budget ? new Intl.NumberFormat('id-ID').format(item.budget) : '';
-        formFieldsHTML += `
-            <div class="form-group">
-                <label>Anggaran Proyek</label>
-                <input type="text" inputmode="numeric" name="budget" placeholder="mis. 100.000.000" value="${budget}">
-            </div>
-            ${createMasterDataSelect('projectType', 'Jenis Proyek', projectTypeOptions, item.projectType || 'main_income')}
-        `;
+        formFieldsHTML += `<div class="form-group"><label>Anggaran Proyek</label><input type="text" inputmode="numeric" name="budget" placeholder="mis. 100.000.000" value="${budget}"></div>${createMasterDataSelect('projectType', 'Jenis Proyek', projectTypeOptions, item.projectType || 'main_income')}`;
     }
     if (type === 'workers') {
         const professionOptions = appState.professions.map(p => ({ value: p.id, text: p.professionName }));
         const projectFieldsHTML = appState.projects.map(p => {
             const currentWage = item.projectWages?.[p.id] || '';
-            return `
-                <div class="form-group">
-                    <label>Upah Harian - ${p.projectName}</label>
-                    <input type="text" inputmode="numeric" name="project_wage_${p.id}" value="${currentWage ? new Intl.NumberFormat('id-ID').format(currentWage) : ''}" placeholder="mis. 150.000">
-                </div>
-            `;
+            return `<div class="form-group"><label>Upah Harian - ${p.projectName}</label><input type="text" inputmode="numeric" name="project_wage_${p.id}" value="${currentWage ? new Intl.NumberFormat('id-ID').format(currentWage) : ''}" placeholder="mis. 150.000"></div>`;
         }).join('');
         const statusOptions = [ { value: 'active', text: 'Aktif' }, { value: 'inactive', text: 'Tidak Aktif' } ];
+        formFieldsHTML += `${createMasterDataSelect('professionId', 'Profesi', professionOptions, item.professionId || '', 'professions')}${createMasterDataSelect('workerStatus', 'Status', statusOptions, item.status || 'active')}<h5 class="invoice-section-title">Upah Harian per Proyek</h5>${projectFieldsHTML || '<p class="empty-state-small">Belum ada proyek.</p>'}`;
+    }
+    // [PERUBAHAN] Tambahkan input untuk 'Satuan' saat mengedit
+    if (type === 'materials') {
         formFieldsHTML += `
-            ${createMasterDataSelect('professionId', 'Profesi', professionOptions, item.professionId || '', 'professions')}
-            ${createMasterDataSelect('workerStatus', 'Status', statusOptions, item.status || 'active')}
-            <h5 class="invoice-section-title">Upah Harian per Proyek</h5>
-            ${projectFieldsHTML || '<p class="empty-state-small">Belum ada proyek.</p>'}
+            <div class="form-group"><label>Satuan</label><input type="text" name="unit" value="${item.unit || ''}" required></div>
+            <div class="form-group"><label>Titik Pemesanan Ulang</label><input type="number" name="reorderPoint" value="${item.reorderPoint || 0}" required></div>
         `;
     }
 
-    // Gabungkan field menjadi satu konten form
-    const content = `
-        <form id="edit-master-form" data-id="${id}" data-type="${type}">
-            ${formFieldsHTML}
-            <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
-        </form>
-    `;
-
-    // Buat modal dan tangkap elemennya
+    const content = `<form id="edit-master-form" data-id="${id}" data-type="${type}">${formFieldsHTML}<button type="submit" class="btn btn-primary">Simpan Perubahan</button></form>`;
     const modalEl = createModal('editMaster', { title: `Edit ${config.title}`, content });
-    
-    // Pasang event listener ke form yang ada di dalam modal
+
     if (type === 'staff' && modalEl) {
         _attachStaffFormListeners(modalEl);
         $('input[name="feeAmount"]', modalEl)?.addEventListener('input', _formatNumberInput);
         $('input[name="salary"]', modalEl)?.addEventListener('input', _formatNumberInput);
     }
 }
-
-// GANTI SELURUH FUNGSI INI di script.js
+// GANTI SELURUH FUNGSI INI
 async function handleUpdateMasterItem(form) {
     const { id, type } = form.dataset;
     const newName = form.elements.itemName.value.trim();
     const config = masterDataConfig[type];
     if (!config || !newName) return;
 
-    // Siapkan data yang akan di-update
     const dataToUpdate = { [config.nameField]: newName };
-
     if (type === 'staff') {
         dataToUpdate.paymentType = form.elements.paymentType.value;
         dataToUpdate.salary = parseFormattedNumber(form.elements.salary.value) || 0;
         dataToUpdate.feePercentage = Number(form.elements.feePercentage.value) || 0;
         dataToUpdate.feeAmount = parseFormattedNumber(form.elements.feeAmount.value) || 0;
     }
-    if (type === 'suppliers') {
-        dataToUpdate.category = form.elements.itemCategory.value;
-    }
+    if (type === 'suppliers') dataToUpdate.category = form.elements.itemCategory.value;
     if (type === 'projects') {
         dataToUpdate.projectType = form.elements.projectType.value;
         dataToUpdate.budget = parseFormattedNumber(form.elements.budget.value);
@@ -5534,29 +5452,29 @@ async function handleUpdateMasterItem(form) {
             if (wage > 0) dataToUpdate.projectWages[p.id] = wage;
         });
     }
+    // [PERUBAHAN] Simpan data 'unit' saat diperbarui
+    if (type === 'materials') {
+        dataToUpdate.unit = form.elements.unit.value.trim();
+        dataToUpdate.reorderPoint = Number(form.elements.reorderPoint.value) || 0;
+    }
 
     toast('syncing', `Memperbarui ${config.title}...`);
-
     try {
         if (type === 'projects' && dataToUpdate.projectType === 'main_income') {
             await runTransaction(db, async (transaction) => {
                 const q = query(projectsCol, where("projectType", "==", "main_income"));
                 const mainProjectsSnap = await getDocs(q);
                 mainProjectsSnap.forEach(docSnap => {
-                    if (docSnap.id !== id) {
-                        transaction.update(docSnap.ref, { projectType: 'internal_expense' });
-                    }
+                    if (docSnap.id !== id) transaction.update(docSnap.ref, { projectType: 'internal_expense' });
                 });
                 transaction.update(doc(config.collection, id), dataToUpdate);
             });
         } else {
             await updateDoc(doc(config.collection, id), dataToUpdate);
         }
-
         await _logActivity(`Memperbarui Master Data: ${config.title}`, { docId: id, newName });
         toast('success', `${config.title} berhasil diperbarui.`);
-        await handleManageMasterData(type); 
-
+        await handleManageMasterData(type);
     } catch (error) {
         toast('error', `Gagal memperbarui ${config.title}.`);
         console.error(error);
@@ -6470,7 +6388,7 @@ document.body.addEventListener('click', (e) => {
                 }
                 break;
             }
-            
+
             case 'open-actions': {
                 if (isViewer()) return;
                 const cardData = actionTarget.closest('.card-list-item').dataset;
