@@ -1,7 +1,7 @@
-﻿const STATIC_CACHE = 'banplex-static-v16'; // <-- Versi dinaikkan
-const DYNAMIC_CACHE = 'banplex-dynamic-v16';
-const IMG_CACHE = 'banplex-img-v16';
-const FONT_CACHE = 'banplex-font-v16';
+﻿const STATIC_CACHE = 'banplex-static-v17'; // <-- Versi dinaikkan
+const DYNAMIC_CACHE = 'banplex-dynamic-v17';
+const IMG_CACHE = 'banplex-img-v17';
+const FONT_CACHE = 'banplex-font-v17';
 
 const IMG_CACHE_MAX_ENTRIES = 120;
 const FONT_CACHE_MAX_ENTRIES = 10;

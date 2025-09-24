@@ -6548,14 +6548,12 @@ document.body.addEventListener('click', (e) => {
             }
         });
 
-// --- [PERBAIKAN] Logika untuk Pull To Refresh (Hanya di Dashboard) ---
 const ptrElement = $('#ptr');
 const pageContainer = $('#page-container');
 let startY = 0;
 let isDragging = false;
 
 pageContainer.addEventListener('touchstart', (e) => {
-    // <-- TAMBAHKAN KONDISI INI -->
     if (appState.activePage !== 'dashboard') return;
     
     if (pageContainer.scrollTop === 0) {
@@ -6566,7 +6564,6 @@ pageContainer.addEventListener('touchstart', (e) => {
 }, { passive: true });
 
 pageContainer.addEventListener('touchmove', (e) => {
-    // <-- TAMBAHKAN KONDISI INI -->
     if (appState.activePage !== 'dashboard' || !isDragging) return;
     
     const diffY = e.touches[0].pageY - startY;
@@ -6583,7 +6580,6 @@ pageContainer.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 pageContainer.addEventListener('touchend', () => {
-    // <-- TAMBAHKAN KONDISI INI -->
     if (appState.activePage !== 'dashboard' || !isDragging) return;
     
     isDragging = false;
