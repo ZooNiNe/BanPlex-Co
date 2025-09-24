@@ -2444,6 +2444,122 @@ async function handleOpenMaterialSelector(dataset) {
         }
     }
 
+    async function handleDeleteSingleAttendance(recordId) {
+        // Cari data absensi untuk ditampilkan di pesan konfirmasi
+        const record = appState.attendanceRecords.find(r => r.id === recordId);
+        const worker = record ? appState.workers.find(w => w.id === record.workerId) : null;
+        const message = worker 
+            ? `Hapus absensi untuk <strong>${worker.workerName}</strong> pada tanggal ${record.date.toDate().toLocaleDateString('id-ID')}?` 
+            : 'Hapus data absensi ini?';
+
+        createModal('confirmDelete', {
+            message,
+            onConfirm: async () => {
+                toast('syncing', 'Menghapus absensi...');
+                try {
+                    await deleteDoc(doc(attendanceRecordsCol, recordId));
+                    await _logActivity('Menghapus Absensi', { recordId, workerName: worker?.workerName });
+                    toast('success', 'Absensi berhasil dihapus.');
+                    renderPageContent(); // Muat ulang halaman aktif
+                } catch (error) {
+                    toast('error', 'Gagal menghapus absensi.');
+                    console.error(error);
+                }
+            }
+        });
+    }
+
+    async function handleEditManualAttendanceModal(recordId) {
+        const record = appState.attendanceRecords.find(r => r.id === recordId);
+        if (!record) { toast('error', 'Data absensi tidak ditemukan.'); return; }
+        const worker = appState.workers.find(w => w.id === record.workerId);
+
+        let content = '';
+        const dateString = record.date.toDate().toLocaleDateString('id-ID');
+
+        // Cek apakah absensi manual atau timestamp
+        if (record.type === 'manual') {
+            content = `
+                <form id="edit-attendance-form" data-id="${recordId}" data-type="manual">
+                    <p>Mengedit absensi untuk <strong>${worker?.workerName || 'N/A'}</strong> pada tanggal <strong>${dateString}</strong>.</p>
+                    <div class="form-group">
+                        <label>Status Kehadiran</label>
+                        <div class="attendance-status-selector">
+                            <label><input type="radio" name="status" value="full_day" ${record.attendanceStatus === 'full_day' ? 'checked' : ''}><span>Hadir</span></label>
+                            <label><input type="radio" name="status" value="half_day" ${record.attendanceStatus === 'half_day' ? 'checked' : ''}><span>1/2 Hari</span></label>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
+                </form>`;
+        } else { // type === 'timestamp'
+            const checkInTime = record.checkIn.toDate().toTimeString().slice(0, 5);
+            const checkOutTime = record.checkOut ? record.checkOut.toDate().toTimeString().slice(0, 5) : '';
+            content = `
+                <form id="edit-attendance-form" data-id="${recordId}" data-type="timestamp">
+                    <p>Mengedit absensi untuk <strong>${worker?.workerName || 'N/A'}</strong> pada tanggal <strong>${dateString}</strong>.</p>
+                    <div class="form-group"><label>Jam Masuk</label><input type="time" name="checkIn" value="${checkInTime}" required></div>
+                    <div class="form-group"><label>Jam Keluar</label><input type="time" name="checkOut" value="${checkOutTime}"></div>
+                    <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
+                </form>`;
+        }
+        
+        createModal('editAttendance', { title: 'Edit Absensi', content });
+    }
+
+    async function handleUpdateAttendance(form) {
+        const recordId = form.dataset.id;
+        const recordType = form.dataset.type;
+        
+        const record = appState.attendanceRecords.find(r => r.id === recordId);
+        if (!record) { toast('error', 'Data absensi asli tidak ditemukan.'); return; }
+
+        toast('syncing', 'Memperbarui absensi...');
+        try {
+            const dataToUpdate = {};
+            if (recordType === 'manual') {
+                const newStatus = form.elements.status.value;
+                let newTotalPay = 0;
+                if (newStatus === 'full_day') newTotalPay = record.dailyWage || 0;
+                else if (newStatus === 'half_day') newTotalPay = (record.dailyWage || 0) / 2;
+                
+                dataToUpdate.attendanceStatus = newStatus;
+                dataToUpdate.totalPay = newTotalPay;
+            } else { // type === 'timestamp'
+                const date = record.date.toDate();
+                const [inH, inM] = form.elements.checkIn.value.split(':');
+                const newCheckIn = new Date(date);
+                newCheckIn.setHours(inH, inM);
+                
+                dataToUpdate.checkIn = Timestamp.fromDate(newCheckIn);
+
+                if (form.elements.checkOut.value) {
+                    const [outH, outM] = form.elements.checkOut.value.split(':');
+                    const newCheckOut = new Date(date);
+                    newCheckOut.setHours(outH, outM);
+
+                    const hours = (newCheckOut - newCheckIn) / 3600000;
+                    const normalHours = Math.min(hours, 8);
+                    const overtimeHours = Math.max(0, hours - 8);
+                    const normalPay = normalHours * (record.hourlyWage || 0);
+                    const overtimePay = overtimeHours * (record.hourlyWage || 0) * 1.5;
+
+                    dataToUpdate.checkOut = Timestamp.fromDate(newCheckOut);
+                    dataToUpdate.workHours = hours;
+                    dataToUpdate.totalPay = normalPay + overtimePay;
+                    dataToUpdate.status = 'completed';
+                }
+            }
+            
+            await updateDoc(doc(attendanceRecordsCol, recordId), dataToUpdate);
+            await _logActivity('Mengedit Absensi', { recordId, ...dataToUpdate });
+            toast('success', 'Absensi berhasil diperbarui.');
+            renderPageContent(); // Refresh halaman
+        } catch(error) {
+            toast('error', 'Gagal memperbarui absensi.');
+            console.error(error);
+        }
+    }
+
     async function handleSaveManualAttendance(e) {
         e.preventDefault();
         const form = e.target;
@@ -5984,123 +6100,148 @@ async function handleDeleteMasterItem(id, type) {
         });
     }
 
-    // --- [BARU] FUNGSI UNTUK MODAL DETAIL JURNAL & REKAP ---
+// GANTI SELURUH FUNGSI INI
+async function handleViewJurnalHarianModal(dateStr) {
+    // [PERBAIKAN] Muat data master sebelum menampilkan modal
+    toast('syncing', 'Memuat detail jurnal...');
+    await Promise.all([
+        fetchAndCacheData('projects', projectsCol, 'projectName'),
+        fetchAndCacheData('workers', workersCol, 'workerName')
+    ]);
+    hideToast();
 
-    function handleViewJurnalHarianModal(dateStr) {
-        const date = new Date(dateStr);
-        const groupedByDay = _groupAttendanceByDay(appState.attendanceRecords);
-        const dayData = groupedByDay[dateStr];
+    const date = new Date(dateStr);
+    const groupedByDay = _groupAttendanceByDay(appState.attendanceRecords);
+    const dayData = groupedByDay[dateStr];
 
-        if (!dayData) {
-            toast('error', 'Tidak ada data untuk tanggal ini.');
-            return;
+    if (!dayData) {
+        toast('error', 'Tidak ada data untuk tanggal ini.');
+        return;
+    }
+
+    const formattedDate = date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
+    
+    const workersByProject = dayData.records.reduce((acc, rec) => {
+        const projectId = rec.projectId || 'tanpa_proyek';
+        if (!acc[projectId]) {
+            acc[projectId] = [];
         }
+        acc[projectId].push(rec);
+        return acc;
+    }, {});
 
-        const formattedDate = date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' });
-        
-        const workersByProject = dayData.records.reduce((acc, rec) => {
-            const projectId = rec.projectId || 'tanpa_proyek';
-            if (!acc[projectId]) {
-                acc[projectId] = [];
-            }
-            acc[projectId].push(rec);
-            return acc;
-        }, {});
+    const projectSectionsHTML = Object.entries(workersByProject).map(([projectId, records]) => {
+        const project = appState.projects.find(p => p.id === projectId);
+        const projectName = project ? project.projectName : 'Proyek Tidak Diketahui';
 
-        const projectSectionsHTML = Object.entries(workersByProject).map(([projectId, records]) => {
-            const project = appState.projects.find(p => p.id === projectId);
-            const projectName = project ? project.projectName : 'Proyek Tidak Diketahui';
+        const workersHTML = records.sort((a,b) => (a.workerName || '').localeCompare(b.workerName || '')).map(rec => {
+            let statusBadge = '';
+            if (rec.attendanceStatus === 'full_day') statusBadge = `<span class="status-badge status-hadir">Hadir</span>`;
+            else if (rec.attendanceStatus === 'half_day') statusBadge = `<span class="status-badge status-setengah">1/2 Hari</span>`;
+            else statusBadge = `<span class="status-badge status-absen">Absen</span>`;
+            
+            // [PERBAIKAN] Ambil nama pekerja dari data master untuk konsistensi
+            const worker = appState.workers.find(w => w.id === rec.workerId);
+            const workerName = worker ? worker.workerName : (rec.workerName || 'Pekerja Dihapus');
+            
+            return `
+            <div class="jurnal-pekerja-item card">
+                <div class="jurnal-pekerja-info">
+                    <strong>${workerName}</strong>
+                </div>
+                <div class="jurnal-pekerja-status">
+                    <strong>${fmtIDR(rec.totalPay || 0)}</strong>
+                    ${statusBadge}
+                </div>
+                ${isViewer() ? '' : `
+                <div class="jurnal-pekerja-actions">
+                    <button class="btn-icon" data-action="edit-attendance" data-id="${rec.id}" title="Edit Absensi">
+                        <span class="material-symbols-outlined">edit_calendar</span>
+                    </button>
+                    <button class="btn-icon btn-icon-danger" data-action="delete-single-attendance" data-id="${rec.id}" title="Hapus Absensi">
+                        <span class="material-symbols-outlined">delete</span>
+                    </button>
+                </div>
+                `}
+            </div>`;
+        }).join('');
 
-            const workersHTML = records.sort((a,b) => a.workerName.localeCompare(b.workerName)).map(rec => {
-                let statusBadge = '';
-                if (rec.attendanceStatus === 'full_day') statusBadge = `<span class="status-badge status-hadir">Hadir</span>`;
-                else if (rec.attendanceStatus === 'half_day') statusBadge = `<span class="status-badge status-setengah">1/2 Hari</span>`;
-                else statusBadge = `<span class="status-badge status-absen">Absen</span>`;
-                
+        return `
+            <h5 class="detail-section-title">${projectName}</h5>
+            <div class="jurnal-pekerja-list">${workersHTML}</div>
+        `;
+
+    }).join('');
+    
+    const modalContent = `
+        <div class="jurnal-detail-header">
+            <div id="jurnal-detail-summary">
+                <h5 class="summary-title">Total Beban Gaji ${formattedDate}</h5>
+                <strong class="summary-total negative">${fmtIDR(dayData.totalUpah)}</strong>
+            </div>
+        </div>
+        ${projectSectionsHTML}
+    `;
+
+    createModal('dataDetail', { title: 'Detail Jurnal Harian', content: modalContent });
+}
+
+// GANTI SELURUH FUNGSI INI
+async function handleViewWorkerRecap(dataset) {
+    const { workerId } = dataset;
+    const worker = appState.workers.find(w => w.id === workerId);
+    if (!worker) return toast('error', 'Data pekerja tidak ditemukan.');
+
+    toast('syncing', `Memuat rekap untuk ${worker.workerName}...`);
+    
+    // [PERBAIKAN] Tambahkan baris ini untuk memastikan data proyek dimuat
+    await fetchAndCacheData('projects', projectsCol, 'projectName');
+    
+    const q = query(attendanceRecordsCol, where("workerId", "==", workerId), orderBy("date", "desc"));
+    const snap = await getDocs(q);
+    const records = snap.docs.map(d => ({id: d.id, ...d.data()}));
+
+    hideToast();
+
+    const totalUnpaid = records.filter(r => !r.isPaid).reduce((sum, r) => sum + (r.totalPay || 0), 0);
+    const totalPaid = records.filter(r => r.isPaid).reduce((sum, r) => sum + (r.totalPay || 0), 0);
+    const totalDays = records.filter(r => r.totalPay > 0).length;
+
+    const summaryHTML = `
+        <div class="worker-recap-summary card">
+            <div><span class="label">Total Hari Kerja</span><strong>${totalDays} Hari</strong></div>
+            <div><span class="label">Total Upah Dibayar</span><strong class="positive">${fmtIDR(totalPaid)}</strong></div>
+            <div class="total-gaji"><span class="label">Total Tunggakan Gaji</span><strong class="negative">${fmtIDR(totalUnpaid)}</strong></div>
+        </div>
+    `;
+
+    const detailsHTML = records.length > 0 ? `
+        <h5 class="detail-section-title">Riwayat Absensi</h5>
+        <div class="detail-list-container">
+            ${records.map(rec => {
+                const project = appState.projects.find(p => p.id === rec.projectId);
+                const date = rec.date.toDate().toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
+                let statusText = 'N/A';
+                if(rec.attendanceStatus === 'full_day') statusText = 'Hadir';
+                if(rec.attendanceStatus === 'half_day') statusText = '1/2 Hari';
+                if(rec.type === 'timestamp') statusText += ` (${(rec.workHours || 0).toFixed(1)} jam)`;
+
                 return `
-                <div class="jurnal-pekerja-item card">
-                    <div class="jurnal-pekerja-info">
-                        <strong>${rec.workerName}</strong>
+                <div class="detail-list-item">
+                    <div class="item-main">
+                        <span class="item-date">${date}</span>
+                        <span class="item-project">${project?.projectName || 'N/A'}</span>
                     </div>
-                    <div class="jurnal-pekerja-status">
-                        <strong>${fmtIDR(rec.totalPay || 0)}</strong>
-                        ${statusBadge}
+                    <div class="item-secondary">
+                        <strong class="item-amount">${fmtIDR(rec.totalPay || 0)}</strong>
+                        <span class="item-status ${rec.isPaid ? 'paid' : 'unpaid'}">${rec.isPaid ? 'Lunas' : 'Belum Lunas'}</span>
                     </div>
                 </div>`;
-            }).join('');
+            }).join('')}
+        </div>` : '<p class="empty-state-small">Belum ada riwayat absensi.</p>';
 
-            return `
-                <h5 class="detail-section-title">${projectName}</h5>
-                <div class="jurnal-pekerja-list">${workersHTML}</div>
-            `;
-
-        }).join('');
-        
-        const modalContent = `
-            <div class="jurnal-detail-header">
-                <div id="jurnal-detail-summary">
-                    <h5 class="summary-title">Total Beban Gaji ${formattedDate}</h5>
-                    <strong class="summary-total negative">${fmtIDR(dayData.totalUpah)}</strong>
-                </div>
-            </div>
-            ${projectSectionsHTML}
-        `;
-
-        createModal('dataDetail', { title: 'Detail Jurnal Harian', content: modalContent });
-    }
-
-    async function handleViewWorkerRecap(dataset) {
-        const { workerId } = dataset;
-        const worker = appState.workers.find(w => w.id === workerId);
-        if (!worker) return toast('error', 'Data pekerja tidak ditemukan.');
-
-        toast('syncing', `Memuat rekap untuk ${worker.workerName}...`);
-        
-        const q = query(attendanceRecordsCol, where("workerId", "==", workerId), orderBy("date", "desc"));
-        const snap = await getDocs(q);
-        const records = snap.docs.map(d => ({id: d.id, ...d.data()}));
-
-        hideToast();
-
-        const totalUnpaid = records.filter(r => !r.isPaid).reduce((sum, r) => sum + (r.totalPay || 0), 0);
-        const totalPaid = records.filter(r => r.isPaid).reduce((sum, r) => sum + (r.totalPay || 0), 0);
-        const totalDays = records.filter(r => r.totalPay > 0).length;
-
-        const summaryHTML = `
-            <div class="worker-recap-summary card">
-                <div><span class="label">Total Hari Kerja</span><strong>${totalDays} Hari</strong></div>
-                <div><span class="label">Total Upah Dibayar</span><strong class="positive">${fmtIDR(totalPaid)}</strong></div>
-                <div class="total-gaji"><span class="label">Total Tunggakan Gaji</span><strong class="negative">${fmtIDR(totalUnpaid)}</strong></div>
-            </div>
-        `;
-
-        const detailsHTML = records.length > 0 ? `
-            <h5 class="detail-section-title">Riwayat Absensi</h5>
-            <div class="detail-list-container">
-                ${records.map(rec => {
-                    const project = appState.projects.find(p => p.id === rec.projectId);
-                    const date = rec.date.toDate().toLocaleDateString('id-ID', {day:'2-digit', month:'short', year:'numeric'});
-                    let statusText = 'N/A';
-                    if(rec.attendanceStatus === 'full_day') statusText = 'Hadir';
-                    if(rec.attendanceStatus === 'half_day') statusText = '1/2 Hari';
-                    if(rec.type === 'timestamp') statusText += ` (${(rec.workHours || 0).toFixed(1)} jam)`;
-
-                    return `
-                    <div class="detail-list-item">
-                        <div class="item-main">
-                            <span class="item-date">${date}</span>
-                            <span class="item-project">${project?.projectName || 'N/A'}</span>
-                        </div>
-                        <div class="item-secondary">
-                            <strong class="item-amount">${fmtIDR(rec.totalPay || 0)}</strong>
-                            <span class="item-status ${rec.isPaid ? 'paid' : 'unpaid'}">${rec.isPaid ? 'Lunas' : 'Belum Lunas'}</span>
-                        </div>
-                    </div>`;
-                }).join('')}
-            </div>` : '<p class="empty-state-small">Belum ada riwayat absensi.</p>';
-
-        createModal('dataDetail', { title: `Rekap Gaji: ${worker.workerName}`, content: summaryHTML + detailsHTML });
-    }
+    createModal('dataDetail', { title: `Rekap Gaji: ${worker.workerName}`, content: summaryHTML + detailsHTML });
+}
 
     function _attachStaffFormListeners(container) {
         const paymentTypeSelect = container.querySelector('[name="paymentType"]');
