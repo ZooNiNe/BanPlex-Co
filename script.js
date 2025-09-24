@@ -397,39 +397,29 @@ async function main() {
             $('#confirm-bill-btn')?.addEventListener('click', () => { data.onConfirm('unpaid'); closeModalFunc(); });
         }
         if (type === 'payment') {
-            const paymentForm = $('#payment-form');
-            if (paymentForm) {
-                paymentForm.addEventListener('submit', (e) => {
-                    e.preventDefault();
-                    const amount = fmtIDR(parseFormattedNumber(paymentForm.elements.amount.value));
-                    const onConfirm = () => (data.paymentType === 'bill') ? handleProcessBillPayment(e.target) : handleProcessPayment(e.target);
-                    createModal('confirmPayBill', { message: `Anda akan membayar sebesar ${amount}. Lanjutkan?`, onConfirm });
-                });
-                paymentForm.querySelectorAll('input[inputmode="numeric"]').forEach(input => input.addEventListener('input', _formatNumberInput));
-            }
+            $('#payment-form')?.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const amount = fmtIDR(parseFormattedNumber(e.target.elements.amount.value));
+                const onConfirm = () => {
+                    // [PERBAIKAN] Logika ini sekarang bisa membedakan jenis pembayaran
+                    if (e.target.dataset.type === 'bill') handleProcessBillPayment(e.target);
+                    else handleProcessPayment(e.target);
+                };
+                createModal('confirmPayBill', { message: `Anda akan membayar sebesar ${amount}. Lanjutkan?`, onConfirm });
+            });
+            $$('#payment-form input[inputmode="numeric"]')?.forEach(input => input.addEventListener('input', _formatNumberInput));
         }
         if (type === 'actionsMenu') $$('.actions-menu-item').forEach(btn => btn.addEventListener('click', () => closeModalFunc()));
-        
         if (type === 'manageMaster' || type === 'editMaster') {
             const modalEl = $(`#${type}-modal`);
             if (!modalEl) return;
-
             const formId = (type === 'manageMaster') ? '#add-master-item-form' : '#edit-master-form';
             const formHandler = (type === 'manageMaster') ? handleAddMasterItem : (form) => createModal('confirmEdit', { onConfirm: () => { handleUpdateMasterItem(form); closeModalFunc(); } });
-            
-            $(formId, modalEl)?.addEventListener('submit', (e) => {
-                e.preventDefault();
-                formHandler(e.target);
-            });
-
+            $(formId, modalEl)?.addEventListener('submit', (e) => { e.preventDefault(); formHandler(e.target); });
             _initCustomSelects(modalEl);
             $$('input[inputmode="numeric"]', modalEl).forEach(i => i.addEventListener('input', _formatNumberInput));
-            
-            if (modalEl.querySelector('[data-type="staff"]')) {
-                _attachStaffFormListeners(modalEl);
-            }
+            if (modalEl.querySelector('[data-type="staff"]')) _attachStaffFormListeners(modalEl);
         }
-
         if (type === 'editItem') {
              _initCustomSelects($(`#${type}-modal`));
             $$(`#${type}-modal input[inputmode="numeric"]`).forEach(input => input.addEventListener('input', _formatNumberInput));
@@ -445,7 +435,7 @@ async function main() {
             });
         }
     }
-    
+
     onAuthStateChanged(auth, (user) => {
         if (user) {
             initializeAppSession(user);
@@ -4001,8 +3991,83 @@ function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
             console.error('Bill Payment error:', error);
         }
     }
-// --- [BARU] FUNGSI HELPER UNTUK AKORDION GANDA DI SIMULASI ---
-function _createNestedAccordionHTML(title, items) {
+    async function handlePaymentModal(id, type) {
+        let item, remainingAmount, title, paymentType;
+
+        if (type === 'pinjaman') {
+            item = appState.fundingSources.find(i => i.id === id);
+            if (!item) { toast('error', 'Data pinjaman tidak ditemukan.'); return; }
+            const totalPayable = item.totalRepaymentAmount || item.totalAmount;
+            remainingAmount = totalPayable - (item.paidAmount || 0);
+            title = 'Pembayaran Cicilan Pinjaman';
+            paymentType = 'loan';
+        } else {
+            // Logika ini bisa dikembangkan untuk tipe lain jika perlu
+            return; 
+        }
+
+        const content = `
+            <form id="payment-form" data-id="${id}" data-type="${type}">
+                <div class="payment-summary">
+                    <div><span>Total Tagihan:</span><strong>${fmtIDR(item.totalRepaymentAmount || item.totalAmount)}</strong></div>
+                    <div><span>Sudah Dibayar:</span><strong>${fmtIDR(item.paidAmount || 0)}</strong></div>
+                    <div class="remaining"><span>Sisa Tagihan:</span><strong>${fmtIDR(remainingAmount)}</strong></div>
+                </div>
+                <div class="form-group">
+                    <label>Jumlah Pembayaran</label>
+                    <input type="text" name="amount" inputmode="numeric" required placeholder="Masukkan jumlah pembayaran" value="${new Intl.NumberFormat('id-ID').format(remainingAmount)}">
+                </div>
+                <div class="form-group">
+                    <label>Tanggal Pembayaran</label>
+                    <input type="date" name="date" value="${new Date().toISOString().slice(0,10)}" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Bayar</button>
+            </form>
+        `;
+        createModal('payment', { title, content, paymentType });
+    }
+
+    async function handleProcessPayment(form) {
+        const { id, type } = form.dataset;
+        if (type !== 'pinjaman') return;
+
+        const amountToPay = parseFormattedNumber(form.elements.amount.value);
+        const date = new Date(form.elements.date.value);
+
+        if (amountToPay <= 0) {
+            toast('error', 'Jumlah pembayaran harus lebih dari nol.'); return;
+        }
+
+        toast('syncing', 'Memproses pembayaran...');
+        try {
+            const loanRef = doc(fundingSourcesCol, id);
+
+            await runTransaction(db, async (transaction) => {
+                const loanSnap = await transaction.get(loanRef);
+                if (!loanSnap.exists()) throw new Error("Data pinjaman tidak ditemukan");
+
+                const loanData = loanSnap.data();
+                const totalPayable = loanData.totalRepaymentAmount || loanData.totalAmount;
+                const newPaidAmount = (loanData.paidAmount || 0) + amountToPay;
+                const isPaid = newPaidAmount >= totalPayable;
+
+                transaction.update(loanRef, {
+                    paidAmount: increment(amountToPay),
+                    status: isPaid ? 'paid' : 'unpaid'
+                });
+            });
+
+            await _logActivity(`Membayar Cicilan Pinjaman`, { loanId: id, amount: amountToPay });
+            toast('success', 'Pembayaran berhasil dicatat.');
+            if (appState.activePage === 'pemasukan') renderPemasukanPage();
+
+        } catch (error) {
+            toast('error', `Gagal memproses pembayaran.`);
+            console.error('Loan Payment error:', error);
+        }
+    }
+    
+    function _createNestedAccordionHTML(title, items) {
     if (!items || items.length === 0) return '';
 
     const totalSectionAmount = items.reduce((sum, item) => sum + item.remainingAmount, 0);
@@ -6405,6 +6470,29 @@ document.body.addEventListener('click', (e) => {
                 }
                 break;
             }
+            
+            case 'open-actions': {
+                if (isViewer()) return;
+                const cardData = actionTarget.closest('.card-list-item').dataset;
+                const { id, type } = cardData;
+                const actions = [
+                    { label: 'Edit Data', action: 'edit-item', icon: 'edit', id, type },
+                    { label: 'Hapus Data', action: 'delete-item', icon: 'delete', id, type }
+                ];
+    
+                if (type === 'pinjaman') {
+                    const loan = appState.fundingSources.find(f => f.id === id);
+                    const isPaid = loan && loan.status === 'paid';
+                    
+                    if (!isPaid) {
+                        actions.unshift({ label: 'Bayar Cicilan', action: 'pay-item', icon: 'payment', id, type });
+                    }
+                }
+                
+                createModal('actionsMenu', { actions, targetRect: actionTarget.getBoundingClientRect() });
+                break;
+            }
+
             case 'delete-single-attendance':
                 if (isViewer()) return;
                 handleDeleteSingleAttendance(actionTarget.dataset.id);
