@@ -6548,55 +6548,62 @@ document.body.addEventListener('click', (e) => {
             }
         });
 
-        // --- [TAMBAHKAN BLOK INI] --- Logika untuk Pull To Refresh ---
-    const ptrElement = $('#ptr');
-    const pageContainer = $('#page-container');
-    let startY = 0;
-    let isDragging = false;
+// --- [PERBAIKAN] Logika untuk Pull To Refresh (Hanya di Dashboard) ---
+const ptrElement = $('#ptr');
+const pageContainer = $('#page-container');
+let startY = 0;
+let isDragging = false;
 
-    pageContainer.addEventListener('touchstart', (e) => {
-        if (pageContainer.scrollTop === 0) {
-            startY = e.touches[0].pageY;
-            isDragging = true;
-            ptrElement.style.transition = 'none';
+pageContainer.addEventListener('touchstart', (e) => {
+    // <-- TAMBAHKAN KONDISI INI -->
+    if (appState.activePage !== 'dashboard') return;
+    
+    if (pageContainer.scrollTop === 0) {
+        startY = e.touches[0].pageY;
+        isDragging = true;
+        ptrElement.style.transition = 'none';
+    }
+}, { passive: true });
+
+pageContainer.addEventListener('touchmove', (e) => {
+    // <-- TAMBAHKAN KONDISI INI -->
+    if (appState.activePage !== 'dashboard' || !isDragging) return;
+    
+    const diffY = e.touches[0].pageY - startY;
+    if (diffY > 0) {
+        e.preventDefault();
+        const pullDistance = Math.min(diffY * 0.5, 120);
+        ptrElement.style.transform = `translateY(${pullDistance - 70}px)`;
+        if (pullDistance > 80 && !ptrElement.classList.contains('ptr-ready')) {
+            ptrElement.classList.add('ptr-ready');
+        } else if (pullDistance <= 80 && ptrElement.classList.contains('ptr-ready')) {
+            ptrElement.classList.remove('ptr-ready');
         }
-    }, { passive: true });
+    }
+}, { passive: false });
 
-    pageContainer.addEventListener('touchmove', (e) => {
-        if (!isDragging) return;
-        const diffY = e.touches[0].pageY - startY;
-        if (diffY > 0) {
-            e.preventDefault();
-            const pullDistance = Math.min(diffY * 0.5, 120);
-            ptrElement.style.transform = `translateY(${pullDistance - 70}px)`;
-            if (pullDistance > 80 && !ptrElement.classList.contains('ptr-ready')) {
-                ptrElement.classList.add('ptr-ready');
-            } else if (pullDistance <= 80 && ptrElement.classList.contains('ptr-ready')) {
-                ptrElement.classList.remove('ptr-ready');
-            }
-        }
-    }, { passive: false });
+pageContainer.addEventListener('touchend', () => {
+    // <-- TAMBAHKAN KONDISI INI -->
+    if (appState.activePage !== 'dashboard' || !isDragging) return;
+    
+    isDragging = false;
+    ptrElement.style.transition = 'transform 0.3s ease';
 
-    pageContainer.addEventListener('touchend', () => {
-        if (!isDragging) return;
-        isDragging = false;
-        ptrElement.style.transition = 'transform 0.3s ease';
+    if (ptrElement.classList.contains('ptr-ready')) {
+        ptrElement.style.transform = 'translateY(0px)';
+        ptrElement.classList.add('ptr-refreshing');
+        
+        setTimeout(() => {
+            renderPageContent().then(() => {
+                ptrElement.style.transform = 'translateY(-70px)';
+                ptrElement.classList.remove('ptr-ready', 'ptr-refreshing');
+            });
+        }, 800);
+    } else {
+        ptrElement.style.transform = 'translateY(-70px)';
+    }
+});
 
-        if (ptrElement.classList.contains('ptr-ready')) {
-            ptrElement.style.transform = 'translateY(0px)';
-            ptrElement.classList.add('ptr-refreshing');
-            
-            setTimeout(() => {
-                renderPageContent().then(() => {
-                    ptrElement.style.transform = 'translateY(-70px)';
-                    ptrElement.classList.remove('ptr-ready', 'ptr-refreshing');
-                });
-            }, 800);
-        } else {
-            ptrElement.style.transform = 'translateY(-70px)';
-        }
-    });
-            
     window.addEventListener('online', () => { appState.isOnline = true; toast('online', 'Kembali online'); syncOfflineData(); });
     window.addEventListener('offline', () => { appState.isOnline = false; toast('offline', 'Anda sedang offline'); });
     if (!navigator.onLine) toast('offline', 'Anda sedang offline');

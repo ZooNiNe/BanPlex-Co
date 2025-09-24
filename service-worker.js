@@ -1,14 +1,11 @@
-﻿// Nama cache (versi dinaikkan untuk memicu pembaruan)
-const STATIC_CACHE = 'banplex-static-v15'; // <-- Versi dinaikkan
-const DYNAMIC_CACHE = 'banplex-dynamic-v15';
-const IMG_CACHE = 'banplex-img-v15';
-const FONT_CACHE = 'banplex-font-v15';
+﻿const STATIC_CACHE = 'banplex-static-v16'; // <-- Versi dinaikkan
+const DYNAMIC_CACHE = 'banplex-dynamic-v16';
+const IMG_CACHE = 'banplex-img-v16';
+const FONT_CACHE = 'banplex-font-v16';
 
-// Batas entri cache untuk mencegah cache membengkak
 const IMG_CACHE_MAX_ENTRIES = 120;
 const FONT_CACHE_MAX_ENTRIES = 10;
 
-// Daftar aset inti yang akan disimpan saat instalasi (Precaching)
 const STATIC_ASSETS = [
   './',
   './index.html',
