@@ -1861,3 +1861,498 @@ padding: 0.3rem 0.6rem;
   display: flex;
   gap: 0.5rem;
 }
+
+/* --- Autocomplete Component Styles --- */
+
+/* Wrapper utama, posisinya sebagai jangkar untuk daftar saran */
+.autocomplete-wrapper {
+  position: relative;
+}
+
+/* Kontainer untuk daftar saran */
+.autocomplete-suggestions {
+  display: none; /* Sembunyi secara default */
+  position: absolute;
+  top: 100%; /* Muncul tepat di bawah input */
+  left: 0;
+  right: 0;
+  background-color: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  max-height: 200px; /* Batas tinggi, bisa di-scroll */
+  overflow-y: auto;
+  z-index: 1000; /* Pastikan muncul di atas elemen lain */
+}
+
+/* Tampilkan kontainer saat aktif */
+.autocomplete-suggestions.active {
+  display: block;
+}
+
+/* Setiap item dalam daftar saran */
+.suggestion-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  border-bottom: 1px solid #f1f5f9;
+}
+.suggestion-item:last-child {
+  border-bottom: none;
+}
+.suggestion-item:hover {
+  background-color: #f8fafc;
+}
+
+/* Nama material di dalam item saran */
+.suggestion-item .suggestion-name {
+  font-weight: 500;
+  color: #1e293b;
+}
+
+/* Teks yang cocok dengan pencarian */
+.suggestion-item .match-highlight {
+  font-weight: 700;
+  color: var(--primary-color);
+}
+
+/* Badge untuk satuan */
+.suggestion-item .unit-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  padding: 0.15rem 0.4rem;
+  border-radius: 99px;
+  background-color: #e2e8f0;
+  color: #475569;
+  white-space: nowrap; /* Mencegah badge terpotong */
+}
+
+.autocomplete-clear-btn {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex; /* Menggunakan flex untuk alignment vertikal icon */
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background-color: #f1f5f9;
+  color: #64748b;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.autocomplete-clear-btn:hover {
+  background-color: #e2e8f0;
+  color: #1e293b;
+}
+
+.autocomplete-clear-btn .material-symbols-outlined {
+  font-size: 18px; /* Ukuran icon */
+}
+
+/* Sedikit penyesuaian pada input agar tidak tertimpa tombol */
+.autocomplete-wrapper .autocomplete-input {
+  padding-right: 35px; /* Beri ruang untuk tombol X */
+}
+/* Styling untuk tombol tambah di dalam autocomplete */
+.autocomplete-add-btn {
+  position: absolute;
+  /* Posisikan di sebelah kiri tombol hapus */
+  right: 40px; 
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background-color: #e0f2fe; /* Warna biru muda */
+  color: #0284c7; /* Warna biru primer */
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.autocomplete-add-btn:hover {
+  background-color: #bae6fd;
+  color: #0369a1;
+}
+
+.autocomplete-add-btn .material-symbols-outlined {
+  font-size: 20px;
+}
+
+/* Penyesuaian padding input untuk DUA tombol */
+.autocomplete-wrapper .autocomplete-input {
+  /* Beri ruang lebih banyak untuk tombol X dan + */
+  padding-right: 75px; 
+}
+
+/* =======================================================
+ * Sidebar Styles (Desktop)
+ * ======================================================= */
+
+ .sidebar {
+  gap: 1.5rem; /* Jarak antar bagian: header, list, profile */
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0 0.5rem; /* Sedikit padding horizontal */
+}
+
+.sidebar-logo {
+  width: 36px;
+  height: auto;
+}
+
+.sidebar-app-name {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.sidebar-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem; /* Jarak antar item menu */
+  flex-grow: 1; /* Membuat list ini mengisi ruang kosong */
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  position: relative; /* Untuk badge notifikasi */
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.sidebar-nav-item:hover {
+  background-color: var(--surface-muted);
+  color: var(--text);
+}
+
+.sidebar-nav-item.active {
+  background-color: var(--primary-bg, #e0f2fe);
+  color: var(--primary, #0ea5e9);
+  font-weight: 600;
+}
+
+.sidebar-nav-item .material-symbols-outlined {
+  font-size: 22px;
+}
+
+/* Badge notifikasi di sidebar */
+.sidebar-nav-item .notification-badge {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: var(--danger);
+  color: white;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.sidebar-profile {
+  margin-top: auto; /* Mendorong profile ke bagian bawah */
+  padding: 0.75rem;
+  background-color: var(--surface-muted);
+  border-radius: var(--radius);
+}
+
+.sidebar-profile-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.profile-avatar-sm {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.profile-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.profile-name-sm {
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-email-sm {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 768px) {
+  /* --- Pengaturan Dasar untuk Desktop --- */
+  #app-shell {
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+  }
+
+  .bottom-nav {
+      display: none !important; /* Sembunyikan Navigasi Bawah */
+  }
+
+  .content-wrapper {
+      height: 100vh;
+      overflow-y: auto;
+      padding-bottom: 0;
+      /* [BARU] Transisi untuk pergerakan halus */
+      transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .page-container {
+      overflow-y: visible;
+  }
+
+  /* --- [LOGIKA BARU] Sidebar Collapsible --- */
+
+  /* 1. Kondisi default (ciut/collapsed) */
+  .sidebar {
+      display: flex;
+      flex-direction: column;
+      width: 80px; /* Lebar saat ciut */
+      background-color: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 1.5rem 1rem;
+      height: 100vh;
+      position: sticky;
+      top: 0;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); /* Animasi halus */
+      overflow: hidden; /* Sembunyikan konten yang meluber */
+  }
+
+  .content-wrapper {
+      margin-left: 80px; /* Beri ruang sesuai lebar sidebar ciut */
+  }
+
+  /* Sembunyikan teks & detail saat ciut */
+  .sidebar .nav-text,
+  .sidebar .sidebar-app-name,
+  .sidebar .profile-text {
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+      white-space: nowrap; /* Mencegah teks turun baris */
+  }
+
+  /* Pusatkan item saat ciut */
+  .sidebar-header,
+  .sidebar-nav-item,
+  .sidebar-profile-info {
+      justify-content: center;
+  }
+  .sidebar-logo {
+      margin-left: -4px; /* Penyesuaian posisi logo */
+  }
+  .sidebar-nav-item .nav-text {
+      position: absolute; /* Cegah teks mendorong ikon */
+      left: 80px;
+  }
+
+
+  /* 2. Kondisi saat di-hover (melebar/expanded) */
+  .sidebar:hover {
+      width: 240px; /* Lebar saat melebar */
+  }
+
+  .sidebar:hover + .content-wrapper {
+      margin-left: 240px; /* Dorong konten utama saat sidebar melebar */
+  }
+
+  /* Tampilkan kembali teks & detail saat melebar */
+  .sidebar:hover .nav-text,
+  .sidebar:hover .sidebar-app-name,
+  .sidebar:hover .profile-text {
+      opacity: 1;
+      visibility: visible;
+      transition-delay: 0.1s; /* Teks muncul setelah sidebar mulai melebar */
+  }
+
+  /* Kembalikan alignment saat melebar */
+  .sidebar:hover .sidebar-header,
+  .sidebar:hover .sidebar-nav-item,
+  .sidebar:hover .sidebar-profile-info {
+      justify-content: flex-start;
+  }
+   .sidebar:hover .sidebar-logo {
+      margin-left: 0;
+  }
+}
+
+/* =======================================================
+ * Skeleton Loader Styles
+ * ======================================================= */
+
+ .skeleton-wrapper {
+  padding: var(--spacing);
+}
+
+.skeleton {
+  background-color: #e2e8f0;
+  border-radius: 0.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Animasi kilau (shimmer effect) */
+.skeleton::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -150%;
+  width: 150%;
+  height: 100%;
+  background-image: linear-gradient(90deg, 
+      rgba(255, 255, 255, 0) 0, 
+      rgba(255, 255, 255, 0.3) 50%, 
+      rgba(255, 255, 255, 0) 100%);
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  100% {
+      left: 150%;
+  }
+}
+
+/* Variasi bentuk skeleton */
+.skeleton-card {
+  width: 100%;
+  height: 80px;
+  margin-bottom: 1rem;
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.skeleton-actions {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.75rem;
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+}
+
+.skeleton-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius);
+  margin: 0 auto 0.5rem auto;
+}
+
+.skeleton-text {
+  height: 14px;
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-text-sm {
+  height: 12px;
+}
+
+.skeleton-title {
+  height: 24px;
+  width: 40%;
+  margin: 1.5rem 0 1rem 0;
+}
+
+/* =======================================================
+ * [Peningkatan] Warna untuk Ikon Aksi Cepat
+ * ======================================================= */
+
+ .dashboard-action-item[data-nav="tagihan"] .icon-wrapper {
+  background-color: #e0f2fe; /* Biru Muda */
+  color: #0ea5e9;
+}
+.dashboard-action-item[data-nav="laporan"] .icon-wrapper {
+  background-color: #dcfce7; /* Hijau Muda */
+  color: #22c55e;
+}
+.dashboard-action-item[data-nav="stok"] .icon-wrapper {
+  background-color: #fef9c3; /* Kuning Muda */
+  color: #a16207;
+}
+.dashboard-action-item[data-nav="pengeluaran"] .icon-wrapper {
+  background-color: #fee2e2; /* Merah Muda */
+  color: #ef4444;
+}
+.dashboard-action-item[data-nav="lainnya"] .icon-wrapper,
+.dashboard-action-item[data-nav="pengaturan"] .icon-wrapper {
+  background-color: #f3f4f6; /* Abu-abu Muda */
+  color: #4b5563;
+}
+
+/* =======================================================
+ * [PERBAIKAN] UI/UX Dashboard & Responsif
+ * ======================================================= */
+
+/* --- Solusi Masalah 1: Dashboard tidak bisa disentuh --- */
+.content-wrapper {
+  position: relative; /* Diperlukan untuk z-index */
+  z-index: 1; /* Memastikan konten berada di lapisan atas */
+}
+
+/* --- Solusi Masalah 2: Tampilan kartu & grafik --- */
+
+/* 1. Atur agar grid kartu menjadi 1 kolom di mobile (Mobile First) */
+.dashboard-balance-grid {
+  grid-template-columns: 1fr; /* Default menjadi 1 kolom */
+}
+
+/* 2. Beri tinggi yang pasti pada wadah grafik */
+.sparkline-container {
+  height: 45px; /* Tinggi yang ideal untuk grafik tren mini */
+  margin-top: 0.5rem; /* Jarak dari angka di atasnya */
+}
+
+/* 3. Atur kembali menjadi 2 kolom HANYA di tampilan desktop */
+@media (min-width: 768px) {
+  .dashboard-balance-grid {
+      grid-template-columns: 1fr 1fr; /* Kembali menjadi 2 kolom di layar lebar */
+  }
+}
+
