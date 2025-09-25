@@ -61,6 +61,7 @@ async function main() {
         professions: [], incomes: [], fundingSources: [], expenses: [], bills: [],
         attendance: new Map(), users: [], materials: [],
         stockTransactions: [],
+        attendanceRecords: [],
         selectionMode: { active: false, selectedIds: new Set(), pageContext: '' },
         billsFilter: { searchTerm: '', projectId: 'all', supplierId: 'all', sortBy: 'dueDate', sortDirection: 'desc', category: 'all' },
         pdfSettings: null,
@@ -271,8 +272,11 @@ async function main() {
         const modalContainer = $('#modal-container');
         if (!modalContainer) return;
     
-        modalContainer.innerHTML = `<div id="${type}-modal" class="modal-bg">${getModalContent(type, data)}</div>`;
-        const modalEl = modalContainer.firstElementChild;
+        // [PERBAIKAN] Menggunakan insertAdjacentHTML untuk menumpuk modal, bukan menggantinya
+        modalContainer.insertAdjacentHTML('beforeend', `<div id="${type}-modal" class="modal-bg">${getModalContent(type, data)}</div>`);
+        
+        // Menargetkan modal yang baru saja ditambahkan
+        const modalEl = modalContainer.lastElementChild;
         
         setTimeout(() => modalEl.classList.add('show'), 10);
         
@@ -386,55 +390,56 @@ async function main() {
         return `<div>Konten tidak ditemukan</div>`;
     }
     
-    function attachModalEventListeners(type, data, closeModalFunc) {
-        if (type === 'login') $('#google-login-btn')?.addEventListener('click', signInWithGoogle);
-        if (type === 'confirmLogout') $('#confirm-logout-btn')?.addEventListener('click', handleLogout);
-        if (type.startsWith('confirm') && type !== 'confirmExpense') {
-            $('#confirm-btn')?.addEventListener('click', () => { data.onConfirm(); closeModalFunc(); });
-        }
-        if (type === 'confirmExpense') {
-            $('#confirm-paid-btn')?.addEventListener('click', () => { data.onConfirm('paid'); closeModalFunc(); });
-            $('#confirm-bill-btn')?.addEventListener('click', () => { data.onConfirm('unpaid'); closeModalFunc(); });
-        }
-        if (type === 'payment') {
-            $('#payment-form')?.addEventListener('submit', (e) => {
-                e.preventDefault();
-                const amount = fmtIDR(parseFormattedNumber(e.target.elements.amount.value));
-                const onConfirm = () => {
-                    // [PERBAIKAN] Logika ini sekarang bisa membedakan jenis pembayaran
-                    if (e.target.dataset.type === 'bill') handleProcessBillPayment(e.target);
-                    else handleProcessPayment(e.target);
-                };
-                createModal('confirmPayBill', { message: `Anda akan membayar sebesar ${amount}. Lanjutkan?`, onConfirm });
-            });
-            $$('#payment-form input[inputmode="numeric"]')?.forEach(input => input.addEventListener('input', _formatNumberInput));
-        }
-        if (type === 'actionsMenu') $$('.actions-menu-item').forEach(btn => btn.addEventListener('click', () => closeModalFunc()));
-        if (type === 'manageMaster' || type === 'editMaster') {
-            const modalEl = $(`#${type}-modal`);
-            if (!modalEl) return;
-            const formId = (type === 'manageMaster') ? '#add-master-item-form' : '#edit-master-form';
-            const formHandler = (type === 'manageMaster') ? handleAddMasterItem : (form) => createModal('confirmEdit', { onConfirm: () => { handleUpdateMasterItem(form); closeModalFunc(); } });
-            $(formId, modalEl)?.addEventListener('submit', (e) => { e.preventDefault(); formHandler(e.target); });
-            _initCustomSelects(modalEl);
-            $$('input[inputmode="numeric"]', modalEl).forEach(i => i.addEventListener('input', _formatNumberInput));
-            if (modalEl.querySelector('[data-type="staff"]')) _attachStaffFormListeners(modalEl);
-        }
-        if (type === 'editItem') {
-             _initCustomSelects($(`#${type}-modal`));
-            $$(`#${type}-modal input[inputmode="numeric"]`).forEach(input => input.addEventListener('input', _formatNumberInput));
-            $('#edit-item-form')?.addEventListener('submit', (e) => {
-                e.preventDefault();
-                createModal('confirmEdit', { onConfirm: () => { handleUpdateItem(e.target); closeModalFunc(); } });
-            });
-        }
-        if (type === 'editAttendance') {
-            $('#edit-attendance-form')?.addEventListener('submit', (e) => {
-                e.preventDefault();
-                createModal('confirmEdit', { onConfirm: () => { handleUpdateAttendance(e.target); closeModalFunc(); } });
-            });
+// GANTI SELURUH FUNGSI INI
+function attachModalEventListeners(type, data, closeModalFunc) {
+    if (type === 'login') $('#google-login-btn')?.addEventListener('click', signInWithGoogle);
+    if (type === 'confirmLogout') $('#confirm-logout-btn')?.addEventListener('click', handleLogout);
+    if (type.startsWith('confirm') && type !== 'confirmExpense') {
+        $('#confirm-btn')?.addEventListener('click', () => { data.onConfirm(); closeModalFunc(); });
+    }
+    if (type === 'confirmExpense') {
+        $('#confirm-paid-btn')?.addEventListener('click', () => { data.onConfirm('paid'); closeModalFunc(); });
+        $('#confirm-bill-btn')?.addEventListener('click', () => { data.onConfirm('unpaid'); closeModalFunc(); });
+    }
+    if (type === 'payment') {
+        $('#payment-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const amount = fmtIDR(parseFormattedNumber(e.target.elements.amount.value));
+            const onConfirm = () => (e.target.dataset.type === 'bill') ? handleProcessBillPayment(e.target) : handleProcessPayment(e.target);
+            createModal('confirmPayBill', { message: `Anda akan membayar sebesar ${amount}. Lanjutkan?`, onConfirm });
+        });
+        $$('#payment-form input[inputmode="numeric"]')?.forEach(input => input.addEventListener('input', _formatNumberInput));
+    }
+    if (type === 'actionsMenu') $$('.actions-menu-item').forEach(btn => btn.addEventListener('click', () => closeModalFunc()));
+    if (type === 'manageMaster' || type === 'editMaster') {
+        const modalEl = $(`#${type}-modal`);
+        if (!modalEl) return;
+        const formId = (type === 'manageMaster') ? '#add-master-item-form' : '#edit-master-form';
+        const formHandler = (type === 'manageMaster') ? handleAddMasterItem : (form) => createModal('confirmEdit', { onConfirm: () => { handleUpdateItem(form); closeModalFunc(); } });
+        $(formId, modalEl)?.addEventListener('submit', (e) => { e.preventDefault(); formHandler(e.target); });
+        _initCustomSelects(modalEl);
+        $$('input[inputmode="numeric"]', modalEl).forEach(i => i.addEventListener('input', _formatNumberInput));
+        if (modalEl.querySelector('[data-type="staff"]')) _attachStaffFormListeners(modalEl);
+    }
+    if (type === 'editItem') {
+        const modalEl = $(`#${type}-modal`);
+        _initCustomSelects(modalEl);
+        $$('input[inputmode="numeric"]', modalEl).forEach(input => input.addEventListener('input', _formatNumberInput));
+        $('#edit-item-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            createModal('confirmEdit', { onConfirm: () => { handleUpdateItem(e.target); closeModalFunc(); } });
+        });
+        if (modalEl.querySelector('#material-invoice-form') || modalEl.querySelector('#edit-item-form[data-type="expense"] #invoice-items-container')) {
+             _attachPengeluaranFormListeners('material');
         }
     }
+    if (type === 'editAttendance') {
+        $('#edit-attendance-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            createModal('confirmEdit', { onConfirm: () => { handleUpdateAttendance(e.target); closeModalFunc(); } });
+        });
+    }
+}
 
     onAuthStateChanged(auth, (user) => {
         if (user) {
@@ -2813,88 +2818,202 @@ async function handleOpenMaterialSelector(dataset) {
         await renderSubTab(tabs[0].id);
     }
     
-    function _getSalaryRecapHTML() {
-        const today = new Date();
-        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-        const todayStr = today.toISOString().slice(0, 10);
+// GANTI SELURUH FUNGSI INI
+function _getSalaryRecapHTML() {
+    const today = new Date();
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const todayStr = today.toISOString().slice(0, 10);
+
+    return `
+        <div class="card card-pad">
+            <h5 class="section-title-owner" style="margin-top:0;">Pilih Periode Rekap</h5>
+            <div class="recap-filters">
+                <div class="form-group"><label>Tanggal Mulai</label><input type="date" id="recap-start-date" value="${firstDayOfMonth}" ${isViewer() ? 'disabled' : ''}></div>
+                <div class="form-group"><label>Tanggal Selesai</label><input type="date" id="recap-end-date" value="${todayStr}" ${isViewer() ? 'disabled' : ''}></div>
+                ${isViewer() ? '' : `
+                    <button id="generate-recap-btn" class="btn btn-primary">Tampilkan Rekap</button>
+                    <button id="fix-stuck-data-btn" class="btn btn-danger" data-action="fix-stuck-attendance">
+                        <span class="material-symbols-outlined">build_circle</span> Perbaiki Data
+                    </button>
+                `}
+            </div>
+        </div>
+        
+        <div id="recap-actions-container" class="card card-pad" style="margin-top: 1.5rem; display: none;">
+             <div class="rekap-actions" style="grid-template-columns: 1fr 1fr;">
+                 <button id="generate-selected-btn" class="btn" data-action="generate-selected-salary-bill" disabled>Buat Tagihan (Terpilih)</button>
+                 <button id="generate-all-btn" class="btn btn-primary" data-action="generate-all-salary-bill">Buat Tagihan (Semua)</button>
+             </div>
+        </div>
+
+        <div id="recap-results-container" style="margin-top: 1.5rem;">
+             <p class="empty-state-small">Pilih rentang tanggal dan klik "Tampilkan Rekap" untuk melihat hasilnya.</p>
+        </div>
+    `;
+}
+
+
+// GANTI SELURUH FUNGSI INI
+async function generateSalaryRecap(startDate, endDate) {
+    const resultsContainer = $('#recap-results-container');
+    const actionsContainer = $('#recap-actions-container');
+    if (!resultsContainer || !actionsContainer) return;
+
+    resultsContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+    actionsContainer.style.display = 'none';
     
-        return `
-            <div class="card card-pad">
-                <h5 class="section-title-owner" style="margin-top:0;">Pilih Periode Rekap</h5>
-                <div class="recap-filters">
-                    <div class="form-group"><label>Tanggal Mulai</label><input type="date" id="recap-start-date" value="${firstDayOfMonth}" ${isViewer() ? 'disabled' : ''}></div>
-                    <div class="form-group"><label>Tanggal Selesai</label><input type="date" id="recap-end-date" value="${todayStr}" ${isViewer() ? 'disabled' : ''}></div>
-                    ${isViewer() ? '' : `
-                        <button id="generate-recap-btn" class="btn btn-primary">Tampilkan Rekap</button>
-                        <button id="fix-stuck-data-btn" class="btn btn-danger" data-action="fix-stuck-attendance">
-                            <span class="material-symbols-outlined">build_circle</span> Perbaiki Data
-                        </button>
-                    `}
-                </div>
-            </div>
-            <div id="recap-results-container" style="margin-top: 1.5rem;">
-                 <p class="empty-state-small">Pilih rentang tanggal dan klik "Tampilkan Rekap" untuk melihat hasilnya.</p>
-            </div>
-        `;
+    endDate.setHours(23, 59, 59, 999);
+
+    const q = query(attendanceRecordsCol, 
+        where('status', '==', 'completed'),
+        where('isPaid', '==', false),
+        where('date', '>=', startDate),
+        where('date', '<=', endDate)
+    );
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
+        resultsContainer.innerHTML = `<p class="empty-state">Tidak ada data gaji yang belum dibayar pada periode ini.</p>`;
+        return;
     }
 
-    async function generateSalaryRecap(startDate, endDate) {
-        const resultsContainer = $('#recap-results-container');
-        if (!resultsContainer) return;
-        resultsContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
-        
-        endDate.setHours(23, 59, 59, 999);
-    
-        const q = query(attendanceRecordsCol, 
-            where('status', '==', 'completed'),
-            where('isPaid', '==', false),
-            where('date', '>=', startDate),
-            where('date', '<=', endDate)
-        );
-        const snap = await getDocs(q);
-    
-        if (snap.empty) {
-            resultsContainer.innerHTML = `<p class="empty-state">Tidak ada data gaji yang belum dibayar pada periode ini.</p>`;
-            return;
+    const salaryRecap = new Map();
+    snap.forEach(doc => {
+        const record = { id: doc.id, ...doc.data() };
+        const workerId = record.workerId;
+        if (!salaryRecap.has(workerId)) {
+            salaryRecap.set(workerId, { workerName: record.workerName, totalPay: 0, recordIds: [], workerId: workerId });
         }
-    
-        const salaryRecap = new Map();
-        snap.forEach(doc => {
-            const record = { id: doc.id, ...doc.data() };
-            const workerId = record.workerId;
-    
-            if (!salaryRecap.has(workerId)) {
-                salaryRecap.set(workerId, { workerName: record.workerName, totalPay: 0, recordIds: [] });
-            }
-    
-            const workerData = salaryRecap.get(workerId);
-            workerData.totalPay += record.totalPay || 0;
-            workerData.recordIds.push(record.id);
-        });
-    
-        let tableHTML = `
-            <div class="card card-pad">
-                <div class="recap-table-wrapper">
-                    <table class="recap-table">
-                        <thead><tr><th>Nama Pekerja</th><th>Total Upah</th>${isViewer() ? '' : '<th>Aksi</th>'}</tr></thead>
-                        <tbody>
-                            ${[...salaryRecap.entries()].map(([workerId, worker]) => `
-                                <tr>
-                                    <td>${worker.workerName}</td>
-                                    <td><strong>${fmtIDR(worker.totalPay)}</strong></td>
-                                    ${isViewer() ? '' : `<td class="recap-actions-cell">
-                                        <button class="btn-icon" title="Buat Tagihan" data-action="generate-salary-bill" data-worker-id="${workerId}" data-worker-name="${worker.workerName}" data-total-pay="${worker.totalPay}" data-start-date="${startDate.toISOString().slice(0, 10)}" data-end-date="${endDate.toISOString().slice(0, 10)}" data-record-ids="${worker.recordIds.join(',')}"><span class="material-symbols-outlined">request_quote</span></button>
-                                        <button class="btn-icon btn-icon-danger" title="Hapus Rekap" data-action="delete-recap-item" data-record-ids="${worker.recordIds.join(',')}"><span class="material-symbols-outlined">delete</span></button>
-                                    </td>`}
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
+        const workerData = salaryRecap.get(workerId);
+        workerData.totalPay += record.totalPay || 0;
+        workerData.recordIds.push(record.id);
+    });
+
+    const recapData = [...salaryRecap.values()];
+    const tableHTML = `
+        <div class="card card-pad">
+            <div class="recap-table-wrapper">
+                <table class="recap-table" id="salary-recap-table">
+                    <thead>
+                        <tr>
+                            ${isViewer() ? '' : `
+                                <th>
+                                    <label class="custom-checkbox-label" style="justify-content: center;">
+                                        <input type="checkbox" id="select-all-recap" class="fee-alloc-checkbox">
+                                        <span class="custom-checkbox-visual"></span>
+                                    </label>
+                                </th>
+                            `}
+                            <th>Nama Pekerja</th>
+                            <th>Total Upah</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${recapData.map(worker => `
+                            <tr data-worker-id="${worker.workerId}" data-worker-name="${worker.workerName}" data-total-pay="${worker.totalPay}" data-record-ids="${worker.recordIds.join(',')}" class="recap-row">
+                                ${isViewer() ? '' : `
+                                    <td>
+                                        <label class="custom-checkbox-label" style="justify-content: center;">
+                                            <input type="checkbox" class="recap-checkbox fee-alloc-checkbox">
+                                            <span class="custom-checkbox-visual"></span>
+                                        </label>
+                                    </td>
+                                `}
+                                <td>${worker.workerName}</td>
+                                <td><strong>${fmtIDR(worker.totalPay)}</strong></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
             </div>
-        `;
-        resultsContainer.innerHTML = tableHTML;
+        </div>
+    `;
+    resultsContainer.innerHTML = tableHTML;
+    actionsContainer.style.display = 'block';
+    _attachRecapTableListeners(recapData);
+}
+
+function _attachRecapTableListeners(recapData) {
+    const table = $('#salary-recap-table');
+    if (!table) return;
+
+    const selectAll = $('#select-all-recap');
+    const checkBoxes = $$('.recap-checkbox');
+    const generateSelectedBtn = $('#generate-selected-btn');
+
+    const updateButtonState = () => {
+        const selectedCount = $$('.recap-checkbox:checked').length;
+        generateSelectedBtn.disabled = selectedCount === 0;
+        generateSelectedBtn.textContent = `Buat Tagihan (${selectedCount} Terpilih)`;
+    };
+
+    selectAll.addEventListener('change', () => {
+        checkBoxes.forEach(cb => cb.checked = selectAll.checked);
+        updateButtonState();
+    });
+
+    checkBoxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            const allChecked = checkBoxes.every(c => c.checked);
+            selectAll.checked = allChecked;
+            updateButtonState();
+        });
+    });
+
+    updateButtonState();
+}
+
+// GANTI SELURUH FUNGSI INI
+async function handleGenerateBulkSalaryBill(selectedWorkers, startDate, endDate) {
+    if (selectedWorkers.length === 0) {
+        toast('error', 'Tidak ada pekerja yang dipilih.'); return;
     }
+    const grandTotal = selectedWorkers.reduce((sum, worker) => sum + worker.totalPay, 0);
+    const allRecordIds = selectedWorkers.flatMap(worker => worker.recordIds);
+    let description = selectedWorkers.length === 1
+        ? `Gaji ${selectedWorkers[0].workerName} periode ${startDate.toLocaleDateString('id-ID')} s/d ${endDate.toLocaleDateString('id-ID')}`
+        : `Gaji Gabungan ${selectedWorkers.length} pekerja periode ${startDate.toLocaleDateString('id-ID')} s/d ${endDate.toLocaleDateString('id-ID')}`;
+
+    createModal('confirmGenerateBill', {
+        message: `Anda akan membuat 1 tagihan gabungan sebesar <strong>${fmtIDR(grandTotal)}</strong> untuk <strong>${selectedWorkers.length} pekerja</strong>. Lanjutkan?`,
+        onConfirm: async () => {
+            toast('syncing', 'Membuat tagihan gaji massal...');
+            try {
+                const billRef = doc(billsCol);
+                const batch = writeBatch(db);
+                batch.set(billRef, {
+                    description,
+                    amount: grandTotal,
+                    paidAmount: 0,
+                    dueDate: Timestamp.now(),
+                    status: 'unpaid',
+                    type: 'gaji',
+                    // [PERBAIKAN] Simpan detail record ID untuk setiap pekerja
+                    workerDetails: selectedWorkers.map(w => ({ 
+                        id: w.workerId, 
+                        name: w.workerName, 
+                        amount: w.totalPay,
+                        recordIds: w.recordIds // Simpan recordIds per pekerja
+                    })),
+                    recordIds: allRecordIds,
+                    createdAt: serverTimestamp()
+                });
+                allRecordIds.forEach(recordId => {
+                    batch.update(doc(attendanceRecordsCol, recordId), { isPaid: true, billId: billRef.id });
+                });
+                await batch.commit();
+                await _logActivity(`Membuat Tagihan Gaji Massal`, { billId: billRef.id, amount: grandTotal, count: selectedWorkers.length });
+                toast('success', 'Tagihan gaji gabungan berhasil dibuat.');
+                await fetchAndCacheData('bills', billsCol);
+                await fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date');
+                renderJurnalPage();
+            } catch (error) {
+                toast('error', 'Gagal membuat tagihan gaji.');
+                console.error('Error generating bulk salary bill:', error);
+            }
+        }
+    });
+}
 
     async function _renderRiwayatRekapView(container) {
         await fetchAndCacheData('bills', billsCol);
@@ -3302,42 +3421,58 @@ async function handleOpenMaterialSelector(dataset) {
         await renderTabContent(tabs[0].id);
     }
     
-    async function handleOpenBillDetail(billId, expenseId) {
-       let bill = null;
-       if(billId) bill = appState.bills.find(b => b.id === billId);
-       
-       // [MODIFIKASI] Ambil data pembayaran jika ada tagihan
-       let payments = [];
-       if (bill) {
-           const paymentsColRef = collection(db, 'teams', TEAM_ID, 'bills', billId, 'payments');
-           const paymentsSnap = await getDocs(query(paymentsColRef, orderBy("date", "desc")));
-           payments = paymentsSnap.docs.map(d => d.data());
-       }
-   
-       let targetExpenseId = expenseId || bill?.expenseId;
-   
-       if(!targetExpenseId && bill?.type !== 'gaji') {
-           toast('error', 'Data pengeluaran terkait tidak ditemukan.');
-           return;
-       }
-   
-       let content, title;
-   
-       if (bill && bill.type === 'gaji') {
-           // [MODIFIKASI] Kirim data pembayaran ke fungsi pembuat HTML
-           content = _createSalaryBillDetailContentHTML(bill, payments);
-           title = `Detail Tagihan: ${bill.description}`;
-       } else {
-           const expenseDoc = await getDoc(doc(expensesCol, targetExpenseId));
-           if(!expenseDoc.exists()){ toast('error', 'Data pengeluaran terkait tidak ditemukan.'); return; }
-           const expenseData = {id: expenseDoc.id, ...expenseDoc.data()};
-           // [MODIFIKASI] Kirim data pembayaran ke fungsi pembuat HTML
-           content = await _createBillDetailContentHTML(bill, expenseData, payments);
-           title = `Detail Pengeluaran: ${expenseData.description}`;
-       }
-       
-       createModal('dataDetail', { title, content });
-   }
+// GANTI SELURUH FUNGSI INI
+async function handleOpenBillDetail(billId, expenseId) {
+    let bill = null;
+    if(billId) bill = appState.bills.find(b => b.id === billId);
+    
+    let payments = [];
+    if (bill) {
+        const paymentsColRef = collection(db, 'teams', TEAM_ID, 'bills', billId, 'payments');
+        const paymentsSnap = await getDocs(query(paymentsColRef, orderBy("date", "desc")));
+        payments = paymentsSnap.docs.map(d => d.data());
+    }
+
+    let targetExpenseId = expenseId || bill?.expenseId;
+
+    if(!targetExpenseId && bill?.type !== 'gaji') {
+        toast('error', 'Data pengeluaran terkait tidak ditemukan.');
+        return;
+    }
+
+    let content, title, fullContent;
+
+    if (bill && bill.type === 'gaji') {
+        // [PERBAIKAN] Tambahkan baris ini untuk memuat data absensi sebelum melanjutkan
+        toast('syncing', 'Memuat rincian absensi...');
+        await fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date');
+        hideToast();
+        
+        content = _createSalaryBillDetailContentHTML(bill, payments);
+        title = `Detail Tagihan: ${bill.description}`;
+        fullContent = content;
+    } else {
+        const expenseDoc = await getDoc(doc(expensesCol, targetExpenseId));
+        if(!expenseDoc.exists()){ toast('error', 'Data pengeluaran terkait tidak ditemukan.'); return; }
+        
+        const expenseData = {id: expenseDoc.id, ...expenseDoc.data()};
+        content = await _createBillDetailContentHTML(bill, expenseData, payments);
+        title = `Detail Pengeluaran: ${expenseData.description}`;
+        
+        let footerHTML = '';
+        if (expenseData.status === 'delivery_order' && !isViewer()) {
+            footerHTML = `
+                <div class="modal-footer">
+                    <button class="btn btn-primary" data-action="edit-surat-jalan" data-id="${expenseData.id}">
+                        <span class="material-symbols-outlined">edit_note</span> Input Harga & Buat Tagihan
+                    </button>
+                </div>`;
+        }
+        fullContent = content + footerHTML;
+    }
+    
+    createModal('dataDetail', { title, content: fullContent });
+}
 
    function _createAttachmentManagerHTML(expenseData) {
     if (!expenseData) return '';
@@ -3427,40 +3562,57 @@ function _createAttachmentManagerHTML(expenseData) {
     }
     return '';
 }
+// GANTI SELURUH FUNGSI INI
 function _createSalaryBillDetailContentHTML(bill, payments) {
-    // Hitung sisa tagihan
     const remainingAmount = (bill.amount || 0) - (bill.paidAmount || 0);
-
-    // Siapkan HTML untuk riwayat pembayaran jika ada, menggunakan fungsi yang sudah ada
     const paymentHistoryHTML = _createPaymentHistoryHTML(payments);
+    let detailsHTML = '';
 
-    // Ambil ID catatan absensi yang terkait dengan tagihan ini
-    const recordIds = bill.recordIds || [];
-    // Cari data absensi lengkap berdasarkan ID-nya
-    const relatedRecords = recordIds.map(id => appState.attendanceRecords.find(rec => rec.id === id)).filter(Boolean);
-
-    let attendanceDetailsHTML = '';
-    if (relatedRecords.length > 0) {
-        // Buat daftar rincian dari setiap absensi
-        const details = relatedRecords.map(rec => {
-            const project = appState.projects.find(p => p.id === rec.projectId);
-            const date = rec.date.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+    if (bill.workerDetails && bill.workerDetails.length > 0) {
+        // Tampilan untuk TAGIHAN GABUNGAN
+        const workerListHTML = bill.workerDetails.map(worker => {
+            const isIndividuallyPaid = bill.payments?.some(p => p.workerId === worker.id);
+            
+            // [PERBAIKAN] Mengganti tombol menjadi ikon minimalis
+            const actionButtons = !isViewer() ? `
+                <div class="individual-payment-actions">
+                    ${(bill.status === 'unpaid' && !isIndividuallyPaid) ? `
+                        <button class="btn-icon btn-icon-success" data-action="pay-individual-salary" data-bill-id="${bill.id}" data-worker-id="${worker.id}" title="Bayar Gaji ${worker.name}">
+                            <span class="material-symbols-outlined">payment</span>
+                        </button>` : ''}
+                    <button class="btn-icon" data-action="cetak-kwitansi-individu" data-bill-id="${bill.id}" data-worker-id="${worker.id}" title="Cetak Kwitansi ${worker.name}">
+                        <span class="material-symbols-outlined">receipt_long</span>
+                    </button>
+                </div>
+            ` : '';
+            
             return `
-                <div>
-                    <dt>${date} - ${project?.projectName || 'N/A'}</dt>
-                    <dd>${fmtIDR(rec.totalPay || 0)}</dd>
+                <div class="detail-list-item">
+                    <div class="item-main">
+                        <span class="item-date">${worker.name}</span>
+                        ${isIndividuallyPaid ? '<span class="item-status paid" style="font-size:0.7rem; display:block;">Sudah Dibayar</span>' : ''}
+                    </div>
+                    <div class="item-secondary">
+                        <strong class="item-amount">${fmtIDR(worker.amount)}</strong>
+                        ${actionButtons}
+                    </div>
                 </div>
             `;
         }).join('');
-
-        // Bungkus rincian dalam format daftar dengan judul
-        attendanceDetailsHTML = `
-            <h5 class="detail-section-title">Rincian Absensi Terkait</h5>
-            <dl class="detail-list">${details}</dl>
-        `;
+        detailsHTML = `<h5 class="detail-section-title">Rincian Gaji per Pekerja</h5><div class="detail-list-container">${workerListHTML}</div>`;
+    } else {
+        const recordIds = bill.recordIds || [];
+        const relatedRecords = recordIds.map(id => appState.attendanceRecords.find(rec => rec.id === id)).filter(Boolean);
+        if (relatedRecords.length > 0) {
+            const recordDetailsHTML = relatedRecords.map(rec => {
+                const project = appState.projects.find(p => p.id === rec.projectId);
+                const date = rec.date.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+                return `<div><dt>${date} - ${project?.projectName || 'N/A'}</dt><dd>${fmtIDR(rec.totalPay || 0)}</dd></div>`;
+            }).join('');
+            detailsHTML = `<h5 class="detail-section-title">Rincian Absensi Terkait</h5><dl class="detail-list">${recordDetailsHTML}</dl>`;
+        }
     }
 
-    // Gabungkan semua bagian menjadi satu konten HTML untuk modal
     return `
         <div class="payment-summary">
             <div><span>Total Tagihan Gaji:</span><strong>${fmtIDR(bill.amount)}</strong></div>
@@ -3468,46 +3620,7 @@ function _createSalaryBillDetailContentHTML(bill, payments) {
             <div class="remaining"><span>Sisa Tagihan:</span><strong>${fmtIDR(remainingAmount)}</strong></div>
         </div>
         ${paymentHistoryHTML}
-        ${attendanceDetailsHTML}
-    `;
-}
-
-function _createSalaryBillDetailContentHTML(bill, payments) {
-    const remainingAmount = (bill.amount || 0) - (bill.paidAmount || 0);
-
-    const paymentHistoryHTML = _createPaymentHistoryHTML(payments);
-
-    const recordIds = bill.recordIds || [];
-    const relatedRecords = recordIds.map(id => appState.attendanceRecords.find(rec => rec.id === id)).filter(Boolean); // filter(Boolean) untuk menghapus undefined jika ada record yang tidak ditemukan
-
-    let attendanceDetailsHTML = '';
-    if (relatedRecords.length > 0) {
-        const details = relatedRecords.map(rec => {
-            const project = appState.projects.find(p => p.id === rec.projectId);
-            const date = rec.date.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
-            return `
-                <div>
-                    <dt>${date} - ${project?.projectName || 'N/A'}</dt>
-                    <dd>${fmtIDR(rec.totalPay || 0)}</dd>
-                </div>
-            `;
-        }).join('');
-
-        attendanceDetailsHTML = `
-            <h5 class="detail-section-title">Rincian Absensi Terkait</h5>
-            <dl class="detail-list">${details}</dl>
-        `;
-    }
-
-    // Gabungkan semua bagian menjadi satu konten HTML
-    return `
-        <div class="payment-summary">
-            <div><span>Total Tagihan Gaji:</span><strong>${fmtIDR(bill.amount)}</strong></div>
-            <div><span>Sudah Dibayar:</span><strong>${fmtIDR(bill.paidAmount || 0)}</strong></div>
-            <div class="remaining"><span>Sisa Tagihan:</span><strong>${fmtIDR(remainingAmount)}</strong></div>
-        </div>
-        ${paymentHistoryHTML}
-        ${attendanceDetailsHTML}
+        ${detailsHTML}
     `;
 }
 
@@ -3815,76 +3928,71 @@ function _createSalaryBillDetailContentHTML(bill, payments) {
         });
     }
     
-    function _getBillsListHTML(items) {
-        if (items.length === 0) {
-            let message = 'Tidak ada data';
-            if (appState.billsFilter.searchTerm || appState.billsFilter.projectId !== 'all' || appState.billsFilter.supplierId !== 'all' || appState.billsFilter.category !== 'all') {
-                message += ' yang cocok dengan kriteria filter Anda.';
-            } else {
-                 message += ' dalam kategori ini.';
-            }
-            return `<p class="empty-state" style="margin-top: 2rem;">${message}</p>`;
+// GANTI SELURUH FUNGSI INI
+function _getBillsListHTML(items) {
+    if (items.length === 0) {
+        let message = 'Tidak ada data';
+        if (appState.billsFilter.searchTerm || appState.billsFilter.projectId !== 'all' || appState.billsFilter.supplierId !== 'all' || appState.billsFilter.category !== 'all') {
+            message += ' yang cocok dengan kriteria filter Anda.';
+        } else {
+             message += ' dalam kategori ini.';
         }
-    
-        return `
-        <div class="dense-list-container">
-            ${items.map(item => {
-            let supplierName = '';
-            const expense = appState.expenses.find(e => e.id === item.expenseId);
-            if (expense && expense.supplierId) {
-                supplierName = appState.suppliers.find(s => s.id === expense.supplierId)?.supplierName || '';
-            } else if (item.type === 'gaji') {
-                supplierName = appState.workers.find(w => w.id === item.workerId)?.workerName || 'Gaji Karyawan';
-            }
-    
-            const date = item.dueDate?.toDate ? item.dueDate.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : 'N/A';
-            const subtitle = supplierName ? `${supplierName} · Tanggal: ${date}` : `Tanggal: ${date}`;
-            const remainingAmount = (item.amount || 0) - (item.paidAmount || 0);
-            const isFullyPaid = remainingAmount <= 0 && item.status !== 'delivery_order';
-            
-            let statusHTML = '';
-            let mainActionHTML = '';
-    
-            if (item.status === 'delivery_order') {
-                statusHTML = `<span class="status-badge info">Surat Jalan</span>`;
-                mainActionHTML = `<button class="btn btn-sm btn-primary" data-action="edit-surat-jalan" data-id="${item.expenseId}" title="Input Harga"><span class="material-symbols-outlined">edit_note</span> Input Harga</button>`;
-            } else if (isFullyPaid) {
-                statusHTML = `<span class="status-badge positive">Lunas</span>`;
-            } else if (item.paidAmount > 0) {
-                statusHTML = `<span class="status-badge warn">Sisa ${fmtIDR(remainingAmount)}</span>`;
-                mainActionHTML = `
-                    <button class="btn btn-sm btn-success" data-action="pay-bill" data-id="${item.id}" title="Bayar">
-                         <span class="material-symbols-outlined">payment</span> Bayar
-                    </button>`;
-            } else {
-                statusHTML = `<span class="status-badge negative">Belum Dibayar</span>`;
-                mainActionHTML = `
-                    <button class="btn btn-sm btn-success" data-action="pay-bill" data-id="${item.id}" title="Bayar">
-                         <span class="material-symbols-outlined">payment</span> Bayar
-                    </button>`;
-            }
-    
-            return `
-            <div class="dense-list-item" data-id="${item.id}" data-type="bill" data-expense-id="${item.expenseId || ''}">
-                <div class="item-main-content" data-action="open-bill-detail">
-                    <strong class="item-title">${item.description}</strong>
-                    <span class="item-subtitle">${subtitle}</span>
-                    <div class="item-details">
-                        <strong class="item-amount">${item.status === 'delivery_order' ? 'Tanpa Harga' : fmtIDR(item.amount)}</strong>
-                        ${statusHTML}
-                    </div>
-                </div>
-                
-                <div class="item-actions">
-                    ${mainActionHTML}
-                    <button class="btn-icon" data-action="open-bill-actions-modal" data-id="${item.id}" data-expense-id="${item.expenseId || ''}" title="Opsi Lainnya">
-                        <span class="material-symbols-outlined">more_vert</span>
-                    </button>
-                </div>
-            </div>`;
-            }).join('')}
-        </div>`;
+        return `<p class="empty-state" style="margin-top: 2rem;">${message}</p>`;
     }
+
+    return `
+    <div class="dense-list-container">
+        ${items.map(item => {
+        let supplierName = '';
+        const expense = appState.expenses.find(e => e.id === item.expenseId);
+        if (expense && expense.supplierId) {
+            supplierName = appState.suppliers.find(s => s.id === expense.supplierId)?.supplierName || '';
+        } else if (item.type === 'gaji') {
+            supplierName = appState.workers.find(w => w.id === item.workerId)?.workerName || 'Gaji Karyawan';
+        }
+
+        const date = item.dueDate?.toDate ? item.dueDate.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : 'N/A';
+        const subtitle = supplierName ? `${supplierName} · Tanggal: ${date}` : `Tanggal: ${date}`;
+        const remainingAmount = (item.amount || 0) - (item.paidAmount || 0);
+        const isFullyPaid = remainingAmount <= 0 && item.status !== 'delivery_order';
+        
+        let statusHTML = '';
+        let mainActionHTML = '';
+
+        if (item.status === 'delivery_order') {
+            statusHTML = `<span class="status-badge info">Surat Jalan</span>`;
+            // [PERBAIKAN] Tombol utama dihapus, aksinya dipindah ke menu titik tiga
+        } else if (isFullyPaid) {
+            statusHTML = `<span class="status-badge positive">Lunas</span>`;
+        } else if (item.paidAmount > 0) {
+            statusHTML = `<span class="status-badge warn">Sisa ${fmtIDR(remainingAmount)}</span>`;
+            mainActionHTML = `<button class="btn btn-sm btn-success" data-action="pay-bill" data-id="${item.id}" title="Bayar"><span class="material-symbols-outlined">payment</span> Bayar</button>`;
+        } else {
+            statusHTML = `<span class="status-badge negative">Belum Dibayar</span>`;
+            mainActionHTML = `<button class="btn btn-sm btn-success" data-action="pay-bill" data-id="${item.id}" title="Bayar"><span class="material-symbols-outlined">payment</span> Bayar</button>`;
+        }
+
+        return `
+        <div class="dense-list-item" data-id="${item.id}" data-type="bill" data-expense-id="${item.expenseId || ''}">
+            <div class="item-main-content" data-action="open-bill-detail">
+                <strong class="item-title">${item.description}</strong>
+                <span class="item-subtitle">${subtitle}</span>
+                <div class="item-details">
+                    <strong class="item-amount">${item.status === 'delivery_order' ? 'Tanpa Harga' : fmtIDR(item.amount)}</strong>
+                    ${statusHTML}
+                </div>
+            </div>
+            
+            <div class="item-actions">
+                ${mainActionHTML}
+                <button class="btn-icon" data-action="open-bill-actions-modal" data-id="${item.id}" data-expense-id="${item.expenseId || ''}" title="Opsi Lainnya">
+                    <span class="material-symbols-outlined">more_vert</span>
+                </button>
+            </div>
+        </div>`;
+        }).join('')}
+    </div>`;
+}
 
 function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
     const projectOptions = appState.projects.map(p => ({ value: p.id, text: p.projectName }));
@@ -3904,16 +4012,19 @@ function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
             <div class="invoice-item-row" data-index="${index}">
                 <div class="custom-select-wrapper item-material-select">
                     <input type="hidden" name="materialId" value="${subItem.materialId}" required>
-                    <button type="button" class="custom-select-trigger">
+                    <button type="button" class="custom-select-trigger" data-action="open-material-selector" data-index="${index}">
                         <span>${materialName}</span>
                         <span class="material-symbols-outlined">arrow_drop_down</span>
                     </button>
                     <div class="custom-select-options">${materialOptionsHTML}</div>
                 </div>
                 <div class="item-details">
-                    <input type="text" inputmode="numeric" name="itemPrice" placeholder="Harga" class="item-price" value="${new Intl.NumberFormat('id-ID').format(subItem.price)}" required>
-                    <span>x</span>
-                    <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="${subItem.qty}" required>
+                    <div class="price-container" style="display: flex; align-items: center; gap: 0.5rem;">
+                         <input type="text" inputmode="numeric" name="itemPrice" placeholder="Harga" class="item-price" value="${new Intl.NumberFormat('id-ID').format(subItem.price)}" required>
+                        <span>x</span>
+                    </div>
+                    <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="${subItem.qty}" required min="0.01" step="any">
+                    <span class="item-unit" style="margin-left: 0.25rem;">${material?.unit || ''}</span>
                 </div>
                 <span class="item-total">${fmtIDR(subTotal)}</span>
                 <button type="button" class="btn-icon btn-icon-danger remove-item-btn"><span class="material-symbols-outlined">delete</span></button>
@@ -3921,10 +4032,25 @@ function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
         `;
     }).join('');
 
+    // [PERBAIKAN] Tambahkan logika dan HTML untuk tombol toggle di form edit
+    const isCurrentlySuratJalan = item.status === 'delivery_order';
+    const initialFormType = isFromSuratJalan || isCurrentlySuratJalan ? 'surat_jalan' : 'faktur';
+
+    const formTypeToggleHTML = `
+        <div class="form-group">
+            <label>Jenis Input</label>
+            <div class="sort-direction" id="form-type-selector">
+                <button type="button" class="form-type-btn ${initialFormType === 'faktur' ? 'active' : ''}" data-type="faktur">Faktur Lengkap</button>
+                <button type="button" class="form-type-btn ${initialFormType === 'surat_jalan' ? 'active' : ''}" data-type="surat_jalan">Surat Jalan</button>
+            </div>
+            <input type="hidden" name="formType" value="${initialFormType}">
+        </div>
+    `;
+
     let paymentStatusHTML = '';
     if (isFromSuratJalan) {
         paymentStatusHTML = `
-            <div class="form-group">
+            <div id="payment-status-wrapper" class="form-group">
                 <label>Status Pembayaran</label>
                 <div class="sort-direction">
                     <button type="button" class="btn-status-payment active" data-status="unpaid">Jadikan Tagihan</button>
@@ -3936,6 +4062,7 @@ function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
 
     return `
         <form id="edit-item-form" data-id="${item.id}" data-type="expense">
+            ${formTypeToggleHTML}
             ${createMasterDataSelect('project-id', 'Proyek', projectOptions, item.projectId)}
             <div class="form-group"><label>Deskripsi</label><input type="text" name="description" value="${item.description}" required></div>
             ${createMasterDataSelect('supplier-id', 'Supplier', supplierOptions, item.supplierId)}
@@ -3947,7 +4074,7 @@ function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
                 <button type="button" id="add-invoice-item-btn" class="btn-icon" title="Tambah Barang"><span class="material-symbols-outlined">add_circle</span></button>
             </div>
             
-            <div class="invoice-total">
+            <div class="invoice-total" id="total-faktur-wrapper">
                 <span>Total Faktur:</span>
                 <strong id="invoice-total-amount">${fmtIDR(item.amount)}</strong>
             </div>
@@ -3956,8 +4083,9 @@ function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
             <button type="submit" class="btn btn-primary">Simpan Perubahan</button>
         </form>
     `;
-}    
-    async function handleEditSuratJalanModal(expenseId) {
+}
+
+async function handleEditSuratJalanModal(expenseId) {
         const expense = appState.expenses.find(e => e.id === expenseId);
         if (!expense) return toast('error', 'Data surat jalan tidak ditemukan.');
     
@@ -4044,6 +4172,129 @@ function _getEditFormFakturMaterialHTML(item, isFromSuratJalan = false) {
         } catch (error) {
             toast('error', 'Gagal memperbarui data.');
             console.error("Error updating delivery order:", error);
+        }
+    }
+
+    // --- [TAMBAHKAN FUNGSI-FUNGSI BARU INI] ---
+    async function handleEditDeliveryOrderItemsModal(expenseId) {
+        const expense = appState.expenses.find(e => e.id === expenseId);
+        if (!expense) return toast('error', 'Data surat jalan tidak ditemukan.');
+
+        const content = _getEditFormSuratJalanItemsHTML(expense);
+        const modalEl = createModal('editItem', { title: `Edit Item: ${expense.description}`, content });
+
+        if (modalEl) {
+            $('#add-invoice-item-btn', modalEl).addEventListener('click', () => _addInvoiceItemRow(modalEl));
+            $('#invoice-items-container', modalEl).addEventListener('input', (e) => _handleInvoiceItemChange(e, modalEl));
+            $$('.remove-item-btn', modalEl).forEach(btn => btn.addEventListener('click', (e) => {
+                e.target.closest('.invoice-item-row').remove();
+            }));
+            
+            $('#edit-item-form', modalEl).addEventListener('submit', (e) => {
+                e.preventDefault();
+                handleUpdateDeliveryOrderItems(e.target);
+            });
+        }
+    }
+
+    function _getEditFormSuratJalanItemsHTML(item) {
+        const materialOptionsHTML = (appState.materials || [])
+            .map(m => `<div class="custom-select-option" data-value="${m.id}">${m.materialName} (${m.unit})</div>`)
+            .join('');
+
+        const itemsHTML = (item.items || []).map((subItem, index) => {
+            const material = appState.materials.find(m => m.id === subItem.materialId);
+            const materialName = material ? `${material.materialName} (${material.unit})` : 'Pilih Material...';
+            return `
+                <div class="invoice-item-row" data-index="${index}">
+                    <div class="custom-select-wrapper item-material-select">
+                        <input type="hidden" name="materialId" value="${subItem.materialId}" required>
+                        <button type="button" class="custom-select-trigger" data-action="open-material-selector" data-index="${index}">
+                            <span>${materialName}</span><span class="material-symbols-outlined">arrow_drop_down</span>
+                        </button>
+                        <div class="custom-select-options">${materialOptionsHTML}</div>
+                    </div>
+                    <div class="item-details">
+                        <input type="number" name="itemQty" placeholder="Qty" class="item-qty" value="${subItem.qty}" required min="0.01" step="any">
+                        <span class="item-unit" style="margin-left: 0.25rem;">${material?.unit || ''}</span>
+                    </div>
+                    <button type="button" class="btn-icon btn-icon-danger remove-item-btn"><span class="material-symbols-outlined">delete</span></button>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <form id="edit-item-form" data-id="${item.id}" data-type="delivery_order_items">
+                <h5 class="invoice-section-title">Rincian Barang (Tanpa Harga)</h5>
+                <div id="invoice-items-container">${itemsHTML}</div>
+                <div class="add-item-action">
+                    <button type="button" id="add-invoice-item-btn" class="btn-icon" title="Tambah Barang"><span class="material-symbols-outlined">add_circle</span></button>
+                </div>
+                <button type="submit" class="btn btn-primary" style="margin-top: 1.5rem;">Simpan Perubahan Item</button>
+            </form>
+        `;
+    }
+
+    async function handleUpdateDeliveryOrderItems(form) {
+        const expenseId = form.dataset.id;
+        toast('syncing', 'Memperbarui item surat jalan...');
+
+        try {
+            const oldExpenseSnap = await getDoc(doc(expensesCol, expenseId));
+            if (!oldExpenseSnap.exists()) throw new Error('Surat jalan asli tidak ditemukan');
+            const oldItems = oldExpenseSnap.data().items || [];
+
+            const newItems = [];
+            $$('.invoice-item-row', form).forEach(row => {
+                const materialId = row.querySelector('input[name="materialId"]').value;
+                const qty = Number(row.querySelector('input[name="itemQty"]').value);
+                if (materialId && qty > 0) newItems.push({ materialId, qty, price: 0, total: 0 });
+            });
+
+            if (newItems.length === 0) {
+                toast('error', 'Surat jalan harus memiliki minimal satu item.'); return;
+            }
+
+            await runTransaction(db, async (transaction) => {
+                const stockAdjustments = new Map();
+                oldItems.forEach(item => {
+                    stockAdjustments.set(item.materialId, (stockAdjustments.get(item.materialId) || 0) - item.qty);
+                });
+                newItems.forEach(item => {
+                    stockAdjustments.set(item.materialId, (stockAdjustments.get(item.materialId) || 0) + item.qty);
+                });
+                
+                for (const [materialId, qtyChange] of stockAdjustments.entries()) {
+                    if (qtyChange !== 0) {
+                        const materialRef = doc(materialsCol, materialId);
+                        transaction.update(materialRef, { currentStock: increment(-qtyChange) });
+                    }
+                }
+                
+                const q = query(stockTransactionsCol, where("expenseId", "==", expenseId));
+                const oldTransSnap = await getDocs(q);
+                oldTransSnap.forEach(doc => transaction.delete(doc.ref));
+
+                newItems.forEach(item => {
+                    const newTransRef = doc(collection(db, 'teams', TEAM_ID, 'stock_transactions'));
+                    transaction.set(newTransRef, {
+                        materialId: item.materialId, quantity: item.qty, date: oldExpenseSnap.data().date,
+                        type: 'out', expenseId: expenseId, projectId: oldExpenseSnap.data().projectId,
+                        createdAt: serverTimestamp()
+                    });
+                });
+                
+                transaction.update(doc(expensesCol, expenseId), { items: newItems });
+            });
+
+            await _logActivity('Mengedit Item Surat Jalan', { docId: expenseId });
+            toast('success', 'Item surat jalan berhasil diperbarui!');
+            closeModal($('#editItem-modal'));
+            renderTagihanPage();
+
+        } catch (error) {
+            toast('error', 'Gagal memperbarui item.');
+            console.error(error);
         }
     }
 
@@ -5234,20 +5485,59 @@ function _getKwitansiHTML(data) {
     `;
 }
 
-// 2. FUNGSI UNTUK MENAMPILKAN MODAL (DENGAN TOMBOL YANG BENAR)
+// --- [TAMBAHKAN FUNGSI YANG HILANG INI] ---
 async function handleCetakKwitansi(billId) {
+    toast('syncing', 'Mempersiapkan kwitansi...');
+    const bill = appState.bills.find(b => b.id === billId);
+    if (!bill) { toast('error', 'Data tagihan tidak ditemukan.'); return; }
+    
+    let recipientName = 'N/A';
+    if (bill.type === 'gaji' && bill.workerId) {
+        const worker = appState.workers.find(w => w.id === bill.workerId);
+        recipientName = worker?.workerName || 'Pekerja Dihapus';
+    } else if (bill.expenseId) {
+        const expense = appState.expenses.find(e => e.id === bill.expenseId);
+        const supplier = expense ? appState.suppliers.find(s => s.id === expense.supplierId) : null;
+        recipientName = supplier?.supplierName || 'Supplier';
+    }
+
+    const kwitansiData = {
+        nomor: `KW-${bill.id.substring(0, 5).toUpperCase()}`,
+        tanggal: bill.paidAt ? bill.paidAt.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }),
+        namaPenerima: recipientName,
+        jumlah: bill.amount,
+        deskripsi: bill.description
+    };
+
+    const modalContent = `
+        <div id="kwitansi-printable-area">${_getKwitansiHTML(kwitansiData)}</div>
+        <div class="modal-footer kwitansi-footer-actions">
+            <button id="download-kwitansi-img-btn" class="btn btn-secondary"><span class="material-symbols-outlined">image</span> Unduh Gambar</button>
+            <button id="download-kwitansi-btn" class="btn btn-primary"><span class="material-symbols-outlined">picture_as_pdf</span> Unduh PDF</button>
+        </div>
+    `;
+    createModal('dataDetail', { title: 'Pratinjau Kwitansi', content: modalContent });
+    hideToast();
+
+    $('#download-kwitansi-img-btn').addEventListener('click', () => _downloadKwitansiAsImage(kwitansiData));
+    $('#download-kwitansi-btn').addEventListener('click', () => _downloadKwitansiAsPDF(kwitansiData));
+}
+// --- [TAMBAHKAN FUNGSI BARU INI] ---
+async function handleCetakKwitansiIndividu(dataset) {
+    const { billId, workerId } = dataset;
     toast('syncing', 'Mempersiapkan kwitansi...');
 
     const bill = appState.bills.find(b => b.id === billId);
-    if (!bill) { toast('error', 'Data tagihan gaji tidak ditemukan.'); return; }
-    const worker = appState.workers.find(w => w.id === bill.workerId);
-    if (!worker) { toast('error', 'Data pekerja tidak ditemukan.'); return; }
+    if (!bill || !bill.workerDetails) { toast('error', 'Data tagihan gabungan tidak ditemukan.'); return; }
+    
+    const workerDetail = bill.workerDetails.find(w => w.id === workerId);
+    if (!workerDetail) { toast('error', 'Data pekerja di tagihan ini tidak ditemukan.'); return; }
 
     const kwitansiData = {
-        nomor: `KW-G-${bill.id.substring(0, 5).toUpperCase()}`,
+        nomor: `KW-G-${bill.id.substring(0, 4)}-${workerId.substring(0, 4)}`.toUpperCase(),
         tanggal: bill.paidAt ? bill.paidAt.toDate().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }),
-        namaPenerima: worker.workerName,
-        jumlah: bill.amount,
+        namaPenerima: workerDetail.name,
+        jumlah: workerDetail.amount,
         deskripsi: bill.description
     };
 
@@ -5266,15 +5556,63 @@ async function handleCetakKwitansi(billId) {
     createModal('dataDetail', { title: 'Pratinjau Kwitansi', content: modalContent });
     hideToast();
 
-    $('#download-kwitansi-img-btn').addEventListener('click', () => {
-        _downloadKwitansiAsImage(kwitansiData);
-    });
-    $('#download-kwitansi-btn').addEventListener('click', () => {
-        _downloadKwitansiAsPDF(kwitansiData);
+    $('#download-kwitansi-img-btn').addEventListener('click', () => _downloadKwitansiAsImage(kwitansiData));
+    $('#download-kwitansi-btn').addEventListener('click', () => _downloadKwitansiAsPDF(kwitansiData));
+}
+
+async function handlePayIndividualSalaryModal(dataset) {
+    const { billId, workerId } = dataset;
+    const bill = appState.bills.find(b => b.id === billId);
+    const workerDetail = bill?.workerDetails.find(w => w.id === workerId);
+    if (!workerDetail) { toast('error', 'Data pekerja tidak ditemukan.'); return; }
+
+    createModal('confirmPayBill', {
+        message: `Anda akan membayar gaji untuk <strong>${workerDetail.name}</strong> sebesar <strong>${fmtIDR(workerDetail.amount)}</strong>. Lanjutkan?`,
+        onConfirm: () => _processIndividualSalaryPayment(bill, workerDetail)
     });
 }
 
-// 3. FUNGSI UNTUK UNDUH PDF (DENGAN FIX ANTI-STRETCH)
+async function _processIndividualSalaryPayment(bill, workerDetail) {
+    toast('syncing', 'Memproses pembayaran...');
+    try {
+        const billRef = doc(billsCol, bill.id);
+        await runTransaction(db, async (transaction) => {
+            const billSnap = await transaction.get(billRef);
+            if (!billSnap.exists()) throw new Error("Tagihan tidak ditemukan");
+
+            const billData = billSnap.data();
+            const newPaidAmount = (billData.paidAmount || 0) + workerDetail.amount;
+            const isFullyPaid = newPaidAmount >= billData.amount;
+            
+            transaction.update(billRef, {
+                paidAmount: increment(workerDetail.amount),
+                status: isFullyPaid ? 'paid' : 'unpaid',
+                ...(isFullyPaid && { paidAt: serverTimestamp() })
+            });
+
+            const paymentRef = doc(collection(billRef, 'payments'));
+            transaction.set(paymentRef, { 
+                amount: workerDetail.amount, 
+                date: Timestamp.now(), 
+                workerId: workerDetail.id, 
+                workerName: workerDetail.name,
+                createdAt: serverTimestamp() 
+            });
+        });
+
+        await _logActivity(`Membayar Gaji Individual: ${workerDetail.name}`, { billId: bill.id, amount: workerDetail.amount });
+        toast('success', 'Pembayaran berhasil dicatat.');
+        
+        // Muat ulang data & buka kembali modal
+        await fetchAndCacheData('bills', billsCol);
+        closeModal($('#dataDetail-modal'));
+        handleOpenBillDetail(bill.id, null);
+        
+    } catch (error) {
+        toast('error', `Gagal memproses pembayaran.`);
+        console.error('Individual Salary Payment error:', error);
+    }
+}
 async function _downloadKwitansiAsPDF(data) {
     toast('syncing', 'Membuat PDF...');
     const kwitansiElement = $('#kwitansi-printable-area');
@@ -5367,7 +5705,6 @@ async function handleManageMasterData(type) {
             if (item.projectType === 'main_income') content += `<span class="category-badge category-main">Utama</span>`;
             else if (item.projectType === 'internal_expense') content += `<span class="category-badge category-internal">Internal</span>`;
         }
-        // [PERUBAHAN] Tampilkan satuan di daftar master material
         if (type === 'materials' && item.unit) {
             content += `<span class="category-badge">${item.unit}</span>`;
         }
@@ -5409,7 +5746,6 @@ async function handleManageMasterData(type) {
         const statusOptions = [ { value: 'active', text: 'Aktif' }, { value: 'inactive', text: 'Tidak Aktif' } ];
         formFieldsHTML += `${createMasterDataSelect('professionId', 'Profesi', professionOptions, '', 'professions')}${createMasterDataSelect('workerStatus', 'Status', statusOptions, 'active')}<h5 class="invoice-section-title">Upah Harian per Proyek</h5>${projectFieldsHTML || '<p class="empty-state-small">Belum ada proyek.</p>'}`;
     }
-    // [PERUBAHAN] Tambahkan input untuk 'Satuan' dan 'Titik Pemesanan' di form
     if (type === 'materials') {
         formFieldsHTML += `
             <div class="form-group"><label>Satuan</label><input type="text" name="unit" placeholder="mis. sak, m3, btg" required></div>
@@ -5425,12 +5761,21 @@ async function handleManageMasterData(type) {
     `;
 
     const modalEl = createModal('manageMaster', { 
-        title: `Kelola ${config.title}`, content,
+        title: `Kelola ${config.title}`, 
+        content,
         onClose: () => {
-            const page = appState.activePage;
-            if (['pemasukan', 'pengeluaran', 'absensi'].includes(page)) {
-                // Panggil fungsi render yang sesuai untuk merefresh data
-                window[`render${page.charAt(0).toUpperCase() + page.slice(1)}Page`]();
+            const editModal = $('#editItem-modal');
+            const editForm = editModal ? $('#edit-item-form', editModal) : null;
+            
+            if (editForm) {
+                const { id, type } = editForm.dataset;
+                closeModal(editModal); 
+                handleEditItem(id, type); 
+            } else {
+                const page = appState.activePage;
+                if (['pemasukan', 'pengeluaran', 'absensi'].includes(page)) {
+                    window[`render${page.charAt(0).toUpperCase() + page.slice(1)}Page`]();
+                }
             }
         }
     });
@@ -5442,7 +5787,6 @@ async function handleManageMasterData(type) {
     }
 }
 
-// GANTI SELURUH FUNGSI INI
 async function handleAddMasterItem(form) {
     const type = form.dataset.type;
     const config = masterDataConfig[type];
@@ -6493,9 +6837,24 @@ document.body.addEventListener('click', (e) => {
                 });
                 break;
             }
+            case 'edit-delivery-order-items':
+                if (isViewer()) return;
+                closeModal($('#billActionsModal-modal'));
+                handleEditDeliveryOrderItemsModal(id);
+                break;
             case 'cetak-kwitansi': {
                 if (isViewer()) return;
                 handleCetakKwitansi(actionTarget.dataset.id);
+                break;
+            }
+            case 'cetak-kwitansi-individu': {
+                if (isViewer()) return;
+                handleCetakKwitansiIndividu(actionTarget.dataset);
+                break;
+            }
+            case 'pay-individual-salary': {
+                if (isViewer()) return;
+                handlePayIndividualSalaryModal(actionTarget.dataset);
                 break;
             }
             case 'view-jurnal-harian': {
@@ -6505,6 +6864,7 @@ document.body.addEventListener('click', (e) => {
                 }
                 break;
             }
+
             case 'open-material-selector':
                 handleOpenMaterialSelector(actionTarget.dataset);
                 break;
@@ -6632,18 +6992,22 @@ document.body.addEventListener('click', (e) => {
                     return; 
                 }
                 const bill = appState.bills.find(b => b.id === id);
+                const expense = appState.expenses.find(e => e.id === expenseId);
+
+                // [PERBAIKAN] Logika baru khusus untuk Surat Jalan
+                if (expense && expense.status === 'delivery_order') {
+                    const suratJalanActions = [
+                        { label: 'Edit Item Surat Jalan', action: 'edit-delivery-order-items', icon: 'edit', id: expenseId },
+                        { label: 'Input Harga & Buat Tagihan', action: 'edit-surat-jalan', icon: 'edit_note', id: expenseId },
+                        { label: 'Lihat Detail', action: 'open-bill-detail', icon: 'visibility', id: null, expenseId },
+                        { label: 'Hapus Surat Jalan', action: 'delete-item', icon: 'delete', id: expenseId, type: 'expense' }
+                    ];
+                    createModal('billActionsModal', { bill: { description: expense.description, amount: 0 }, actions: suratJalanActions });
+                    return;
+                }
+                
                 if (!bill) {
-                    const expense = appState.expenses.find(e => e.id === expenseId);
-                    if (expense && expense.status === 'delivery_order') {
-                        const suratJalanActions = [
-                            { label: 'Input Harga & Buat Tagihan', action: 'edit-surat-jalan', icon: 'edit_note', id: expenseId },
-                            { label: 'Lihat Detail', action: 'open-bill-detail', icon: 'visibility', id: null, expenseId },
-                            { label: 'Hapus Surat Jalan', action: 'delete-item', icon: 'delete', id: expenseId, type: 'expense' }
-                        ];
-                        createModal('billActionsModal', { bill: { description: expense.description, amount: 0 }, actions: suratJalanActions });
-                    } else {
-                        toast('error', 'Data tagihan tidak ditemukan.');
-                    }
+                    toast('error', 'Data tagihan tidak ditemukan.');
                     return;
                 }
 
@@ -6665,6 +7029,7 @@ document.body.addEventListener('click', (e) => {
                 createModal('billActionsModal', { bill, actions });
                 break;
             }
+
             case 'pay-item': if (isViewer()) return; if (id && type) handlePaymentModal(id, type); break;
             case 'manage-master': if (isViewer()) return; handleManageMasterData(actionTarget.dataset.type); break;
             case 'manage-master-global':
@@ -6688,10 +7053,33 @@ document.body.addEventListener('click', (e) => {
                 if (isViewer()) return;
                 handleEditManualAttendanceModal(actionTarget.dataset.id); 
                 break;
-            case 'generate-salary-bill': 
-                if (isViewer()) return; 
-                handleGenerateSalaryBill(actionTarget.dataset); 
+            case 'generate-selected-salary-bill': {
+                const selectedRows = $$('#salary-recap-table .recap-checkbox:checked').map(cb => cb.closest('.recap-row'));
+                const selectedWorkers = selectedRows.map(row => ({
+                    workerId: row.dataset.workerId,
+                    workerName: row.dataset.workerName,
+                    totalPay: Number(row.dataset.totalPay),
+                    recordIds: row.dataset.recordIds.split(',')
+                }));
+                const startDate = new Date($('#recap-start-date').value);
+                const endDate = new Date($('#recap-end-date').value);
+                handleGenerateBulkSalaryBill(selectedWorkers, startDate, endDate);
                 break;
+            }
+            case 'generate-all-salary-bill': {
+                const allRows = $$('#salary-recap-table .recap-row');
+                const allWorkers = allRows.map(row => ({
+                    workerId: row.dataset.workerId,
+                    workerName: row.dataset.workerName,
+                    totalPay: Number(row.dataset.totalPay),
+                    recordIds: row.dataset.recordIds.split(',')
+                }));
+                const startDate = new Date($('#recap-start-date').value);
+                const endDate = new Date($('#recap-end-date').value);
+                handleGenerateBulkSalaryBill(allWorkers, startDate, endDate);
+                break;
+            }
+            
             case 'delete-recap-item': if (isViewer()) return; handleDeleteRecapItem(actionTarget.dataset.recordIds); break;
             case 'view-worker-recap': handleViewWorkerRecap(actionTarget.dataset); break;
             case 'manage-users': if (isViewer()) return; handleManageUsers(); break;
