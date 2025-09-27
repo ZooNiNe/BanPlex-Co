@@ -84,6 +84,46 @@ html, body { height: 100%; }
   padding-bottom: calc(85px + env(safe-area-inset-bottom, 0px));
 }
 
+/* Page Transitions */
+.page-container {
+  transition: opacity var(--transition-base), transform var(--transition-base);
+  will-change: opacity, transform;
+}
+
+/* Enter presets */
+.page-pre-enter,
+.page-enter-from-right { /* default: enter from right */
+  opacity: 0;
+  transform: translateX(16px);
+}
+.page-enter-from-left { /* enter from left */
+  opacity: 0;
+  transform: translateX(-16px);
+}
+.page-enter-fade { /* fade only */
+  opacity: 0;
+  transform: none;
+}
+
+/* Exit presets */
+.page-exit,
+.page-exit-left { /* exit to left */
+  opacity: 0;
+  transform: translateX(-12px);
+}
+.page-exit-right { /* exit to right */
+  opacity: 0;
+  transform: translateX(12px);
+}
+.page-exit-fade { /* fade only */
+  opacity: 0;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-container { transition: none !important; }
+}
+
 .toolbar { display: flex; gap: .5rem; align-items: center; margin: .5rem var(--spacing) .5rem var(--spacing); position: relative; z-index: 1; padding: 0; }
 .toolbar.sticky-toolbar { position: static; top: auto; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: none; padding: .5rem var(--spacing); margin: 0 0 .5rem 0; z-index: 1; }
 .dark-theme .toolbar.sticky-toolbar { background: linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.7)); }
@@ -2855,12 +2895,59 @@ body.pending-mode .sidebar {
     display: none !important;
 }
 
-/* [TAMBAHKAN DI style.css] */
-.whats-new-content { text-align: left; }
-.whats-new-header { text-align: center; margin-bottom: 1.5rem; }
-.whats-new-header .material-symbols-outlined { font-size: 3rem; color: var(--success); }
-.whats-new-header h3 { font-size: 1.25rem; margin: 0.5rem 0; }
-.whats-new-header p { font-size: 0.9rem; color: var(--text-dim); margin: 0; }
-.whats-new-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
-.whats-new-list li { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.9rem; }
-.whats-new-list .material-symbols-outlined { color: var(--info); font-size: 1.2rem; }
+/* GANTI BLOK CSS INI DI style.css */
+
+/* CSS untuk Aksi Geser pada Kartu */
+.card-swipe-container {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 0.5rem; /* Memberi jarak antar kartu */
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+.card-swipe-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.card-swipe-actions .btn-icon {
+  height: 100%;
+  width: 70px;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  color: white;
+  background-color: var(--info);
+}
+
+.card-swipe-actions .btn-icon.btn-icon-danger {
+  background-color: var(--danger);
+}
+
+.card-swipe-actions .btn-icon span {
+  font-size: 1.5rem;
+  margin-bottom: 4px;
+}
+
+.card-swipe-content {
+  position: relative;
+  z-index: 2;
+  background-color: var(--panel);
+  touch-action: pan-y;
+  transition: transform 0.3s ease;
+}
+
+/* State saat kartu digeser terbuka */
+.card-swipe-container.open .card-swipe-content {
+  transform: translateX(-140px); /* Geser sejauh lebar total 2 tombol */
+}
