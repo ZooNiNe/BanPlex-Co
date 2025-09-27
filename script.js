@@ -4,13 +4,7 @@
 // =======================================================
 //                       BANPLEX v10.1
 // =======================================================
-const APP_VERSION = "10.1"; // Ganti setiap kali Anda merilis update besar
-const WHATS_NEW_FEATURES = [
-    "Peningkatan UI/UX Dashboard & Responsif.",
-    "Perbaikan Tampilan Modal & Konsistensi Form Dark Theme.",
-    "Perbaikan Tata Letak Modal Rekap Gaji Individual.",
-    "Perbaikan bug minor dan peningkatan performa."
-];
+
 import {
   initializeApp
 } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
@@ -97,7 +91,7 @@ function showUpdateNotification(reg) {
         notificationElement.classList.add('show');
     }, 100);
 }
-
+  
 async function main() {
   // =======================================================
   //          SEKSI 1: KONFIGURASI & STATE GLOBAL
@@ -1792,8 +1786,13 @@ async function handleDeletePendingItem(ds) {
 //          SEKSI 2.5: FUNGSI MODAL & AUTENTIKASI
 // =======================================================
 function createModal(type, data = {}) {
-  const modalContainer = $('#modal-container');
-  if (!modalContainer) return null;
+  let modalContainer = $('#modal-container');
+  // Fallback: buat container jika belum ada (meningkatkan robustness di semua halaman)
+  if (!modalContainer) {
+    modalContainer = document.createElement('div');
+    modalContainer.id = 'modal-container';
+    document.body.appendChild(modalContainer);
+  }
 
   // Langkah 1: Buat elemen <div> baru untuk modal.
   // Ini adalah langkah kunci untuk menghindari penghapusan modal lain.
@@ -1826,37 +1825,6 @@ function createModal(type, data = {}) {
   attachModalEventListeners(type, data, closeModalFunc);
   // Kembalikan elemen modal agar bisa dimanipulasi jika perlu
   return modalEl;
-}
-
-function showWhatsNewModal() {
-    const featuresHTML = WHATS_NEW_FEATURES.map(feature => 
-        `<li><span class="material-symbols-outlined">check</span> ${feature}</li>`
-    ).join('');
-
-    const content = `
-        <div class="whats-new-content">
-            <div class="whats-new-header">
-                <span class="material-symbols-outlined">celebration</span>
-                <h3>Berhasil Diperbarui!</h3>
-                <p>Aplikasi Anda telah di-upgrade ke versi ${APP_VERSION}. Berikut adalah beberapa peningkatannya:</p>
-            </div>
-            <ul class="whats-new-list">
-                ${featuresHTML}
-            </ul>
-        </div>
-    `;
-
-    // Kita gunakan tipe 'confirmUserAction' tapi dengan konten custom
-    createModal('confirmUserAction', {
-        title: 'Pembaruan Selesai',
-        message: content, // 'message' akan berisi seluruh HTML kita
-        confirmText: 'Luar Biasa!',
-        showCancel: false, // Sembunyikan tombol batal
-        onConfirm: () => {
-            // Hapus flag setelah pengguna menutup modal
-            sessionStorage.removeItem('appJustUpdated');
-        }
-    });
 }
 
 function closeModal(modalEl) {

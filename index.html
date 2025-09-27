@@ -69,7 +69,12 @@
             <span id="selection-count">0 item dipilih</span>
             <strong id="selection-total">Rp 0</strong>
         </div>
-        
+    </div>
+
+    <!-- Container global untuk semua modal -->
+    <div id="modal-container"></div>
+    <div id="popup-container"></div>
+    
     <input type="file" id="attachment-uploader" accept="image/*" class="hidden">
 
     <script>window.firebaseConfig = {}</script>
@@ -77,47 +82,55 @@
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw-workbox.js').then(reg => {
-            
-            // Cek setelah reload apakah ada 'tanda' bahwa update baru saja terjadi
-            if (sessionStorage.getItem('appJustUpdated') === 'true') {
-              if (typeof showWhatsNewModal === 'function') {
-                showWhatsNewModal(); // Tampilkan modal "Apa yang Baru?"
-              }
-            }
-            
-            const checkForUpdate = () => {
-              if (reg.waiting) {
-                if (typeof showUpdateNotification === 'function') {
-                  showUpdateNotification(reg);
-                }
+          navigator.serviceWorker.register('./sw-workbox.js', { scope: './' }).then(reg => {
+            const showUpdateNotice = () => {
+              const card = document.getElementById('update-notification');
+              if (card) card.style.display = 'block';
+              const btn = document.getElementById('reload-app-btn');
+              if (btn) {
+                btn.onclick = () => {
+                  if (reg.waiting) reg.waiting.postMessage({ action: 'skipWaiting' });
+                };
               }
             };
-    
-            checkForUpdate();
-    
+
+            if (reg.waiting) showUpdateNotice();
             reg.addEventListener('updatefound', () => {
-              const newWorker = reg.installing;
-              if (newWorker) {
-                newWorker.addEventListener('statechange', () => {
-                  if (newWorker.state === 'installed' && navigator.service-worker.controller) {
-                    checkForUpdate();
-                  }
-                });
-              }
+              const nw = reg.installing;
+              if (!nw) return;
+              nw.addEventListener('statechange', () => {
+                if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                  showUpdateNotice();
+                }
+              });
             });
-    
-            // Saat service worker baru mengambil alih, SET TANDA lalu reload
+
             navigator.serviceWorker.addEventListener('controllerchange', () => {
-              // Set 'tanda' di sessionStorage SEBELUM me-reload
-              sessionStorage.setItem('appJustUpdated', 'true'); 
               window.location.reload();
             });
-    
-          }).catch(err => console.error('SW Gagal registrasi:', err));
+            const poke = () => reg.update && reg.update();
+            document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poke(); });
+            window.addEventListener('online', poke);
+            setInterval(poke, 5 * 60 * 1000);
+
+            if ('SyncManager' in window) {
+              navigator.serviceWorker.ready.then(swReg => swReg.sync.register('banplex-sync')).catch(()=>{});
+            }
+            (async () => {
+              try {
+                if (reg.periodicSync) {
+                  const status = await navigator.permissions.query({ name: 'periodic-background-sync' });
+                  if (status.state === 'granted') {
+                    await reg.periodicSync.register('banplex-periodic-sync', { minInterval: 15 * 60 * 1000 });
+                  }
+                }
+              } catch (_) {}
+            })();
+          }).catch(err => console.error('SW register failed', err));
         });
       }
-    </script>    
+    </script>
+
     <script type="module" src="script.js"></script>
 </body>
 </html>
