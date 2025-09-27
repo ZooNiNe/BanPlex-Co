@@ -24,8 +24,6 @@
                 }
             })();
         </script>
-        
-    <link rel="stylesheet" href="style.css">
 
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -43,11 +41,15 @@
         
         <div class="content-wrapper">
             <div class="page-label">
-                <span class="app-name">BanPlex</span>
-                <span id="page-label-name" class="page-name">Dashboard</span>
+                <div class="title-group">
+                    <span class="app-name">BanPlex</span>
+                    <span id="page-label-name" class="page-name">Dashboard</span>
+                </div>
+                <div class="header-right">
+                    <div id="breadcrumb-container" class="breadcrumb-container"></div>
+                    <span id="sync-indicator" class="sync-indicator" style="display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:var(--text-muted);"></span>
+                </div>
             </div>
-    
-            <div id="breadcrumb-container" class="breadcrumb-container"></div>
             
             <div id="ptr" class="ptr" aria-hidden="true">
                 <div class="ptr-spinner" aria-hidden="true"></div>
@@ -67,24 +69,55 @@
             <span id="selection-count">0 item dipilih</span>
             <strong id="selection-total">Rp 0</strong>
         </div>
-    </div>    
-    <div id="modal-container"></div>
-    <div id="popup-container"></div>
-    <!-- [MODIFIKASI] Struktur notifikasi update diubah menjadi lebih ringkas -->
-    <div id="update-notification">
-        <div class="update-card">
-            <div class="update-info">
-                 <h4>Aplikasi telah diperbarui</h4>
-                 <p>Mulai ulang untuk versi terbaru.</p>
-            </div>
-            <button id="reload-app-btn" class="btn">Mulai Ulang</button>
-        </div>
-    </div>
         
     <input type="file" id="attachment-uploader" accept="image/*" class="hidden">
 
     <script>window.firebaseConfig = {}</script>
+
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw-workbox.js').then(reg => {
+            
+            // Cek setelah reload apakah ada 'tanda' bahwa update baru saja terjadi
+            if (sessionStorage.getItem('appJustUpdated') === 'true') {
+              if (typeof showWhatsNewModal === 'function') {
+                showWhatsNewModal(); // Tampilkan modal "Apa yang Baru?"
+              }
+            }
+            
+            const checkForUpdate = () => {
+              if (reg.waiting) {
+                if (typeof showUpdateNotification === 'function') {
+                  showUpdateNotification(reg);
+                }
+              }
+            };
     
+            checkForUpdate();
+    
+            reg.addEventListener('updatefound', () => {
+              const newWorker = reg.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed' && navigator.service-worker.controller) {
+                    checkForUpdate();
+                  }
+                });
+              }
+            });
+    
+            // Saat service worker baru mengambil alih, SET TANDA lalu reload
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+              // Set 'tanda' di sessionStorage SEBELUM me-reload
+              sessionStorage.setItem('appJustUpdated', 'true'); 
+              window.location.reload();
+            });
+    
+          }).catch(err => console.error('SW Gagal registrasi:', err));
+        });
+      }
+    </script>    
     <script type="module" src="script.js"></script>
 </body>
 </html>
