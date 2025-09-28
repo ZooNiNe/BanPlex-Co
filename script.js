@@ -326,23 +326,44 @@ const fmtIDR = (n) => new Intl.NumberFormat('id-ID', {
 const centerTextPlugin = {
     id: 'centerText',
     afterDraw: function(chart) {
-        if (chart.config.type !== 'doughnut' || !chart.options.plugins.centerText) {
-            return;
-        }
-        const { text, color, fontStyle } = chart.options.plugins.centerText;
+        if (chart.config.type !== 'doughnut') return;
+        
         const ctx = chart.ctx;
         const chartArea = chart.chartArea;
-
-        ctx.save();
-        ctx.font = `600 1.25rem ${fontStyle || 'Inter'}`;
-        ctx.fillStyle = color || getComputedStyle(document.body).getPropertyValue('--text').trim();
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
         const centerX = (chartArea.left + chartArea.right) / 2;
         const centerY = (chartArea.top + chartArea.bottom) / 2;
+        
+        ctx.save();
+        
+        let labelToDraw = "Total";
+        let textToDraw = "";
+        
+        const total = chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+        textToDraw = fmtIDR(total);
 
-        ctx.fillText(text, centerX, centerY);
+        // [LOGIKA INTERAKTIF] Cek apakah ada bagian yang sedang aktif (disentuh/hover)
+        const activeElements = chart.getActiveElements();
+        if (activeElements.length > 0) {
+            const activeIndex = activeElements[0].index;
+            const activeData = chart.data.datasets[0].data[activeIndex];
+            const activeLabel = chart.data.labels[activeIndex];
+            
+            labelToDraw = activeLabel;
+            textToDraw = fmtIDR(activeData);
+        }
+
+        // Tampilkan label (mis. "Material")
+        ctx.font = '600 0.8rem Inter';
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--text-dim').trim();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labelToDraw, centerX, centerY - 10);
+
+        // Tampilkan jumlah nominal (mis. "Rp 71.688.000")
+        ctx.font = '700 1.1rem Inter';
+        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--text').trim();
+        ctx.fillText(textToDraw, centerX, centerY + 12);
+
         ctx.restore();
     }
 };
@@ -1008,6 +1029,84 @@ const hideToast = () => {
     if (toastTimeout) clearTimeout(toastTimeout);
     $('#popup-container')?.classList.remove('show');
 };
+
+// script.js
+
+// [TAMBAHKAN BLOK KODE BARU INI]
+/**
+ * Mengaktifkan fungsionalitas swipe-to-dismiss untuk notifikasi toast.
+ */
+function _initToastSwipeHandler() {
+    const container = $('#popup-container');
+    if (!container) return;
+
+    let startX = 0;
+    let currentX = 0;
+    let isDragging = false;
+    let animationFrameId = null;
+
+    // Fungsi untuk mengupdate posisi toast saat digeser
+    const updatePosition = () => {
+        if (!isDragging) return;
+        const diffX = currentX - startX;
+        container.style.transform = `translateX(calc(-50% + ${diffX}px))`; // Geser toast sesuai gerakan jari
+        animationFrameId = requestAnimationFrame(updatePosition);
+    };
+
+    container.addEventListener('touchstart', (e) => {
+        // Hanya mulai jika ada notifikasi yang tampil
+        if (!container.classList.contains('show')) return;
+        
+        // Hapus timeout otomatis jika pengguna mulai berinteraksi
+        if (toastTimeout) clearTimeout(toastTimeout);
+
+        startX = e.touches[0].clientX;
+        isDragging = true;
+        
+        // Hapus transisi agar pergerakan mengikuti jari secara langsung
+        container.style.transition = 'none';
+        
+        // Mulai loop animasi untuk pergerakan yang mulus
+        animationFrameId = requestAnimationFrame(updatePosition);
+    }, { passive: true });
+
+    container.addEventListener('touchmove', (e) => {
+        if (!isDragging) return;
+        currentX = e.touches[0].clientX;
+    }, { passive: true });
+
+    container.addEventListener('touchend', (e) => {
+        if (!isDragging) return;
+        
+        isDragging = false;
+        cancelAnimationFrame(animationFrameId); // Hentikan loop animasi
+
+        const diffX = e.changedTouches[0].clientX - startX;
+        const threshold = container.offsetWidth * 0.4; // Harus digeser sejauh 40% dari lebar toast
+
+        // Kembalikan transisi untuk animasi kembali atau keluar
+        container.style.transition = 'transform 0.3s ease, opacity 0.3s ease, bottom 0.35s ease';
+
+        if (Math.abs(diffX) > threshold) {
+            // Jika swipe cukup jauh, geser keluar dan hilangkan
+            const direction = diffX > 0 ? 1 : -1;
+            container.style.transform = `translateX(calc(-50% + ${direction * container.offsetWidth}px))`;
+            container.style.opacity = '0';
+            
+            // Panggil hideToast setelah animasi keluar selesai
+            setTimeout(() => {
+                hideToast();
+                // Reset style setelah hilang
+                container.style.transform = 'translateX(-50%)';
+                container.style.opacity = '1';
+            }, 300);
+
+        } else {
+            // Jika tidak cukup jauh, kembalikan ke posisi semula
+            container.style.transform = 'translateX(-50%)';
+        }
+    });
+}
 
 async function loadAllLocalDataToState() {
     console.log("Memuat data dari database lokal ke state...");
@@ -4696,9 +4795,8 @@ async function renderAbsensiPage() {
       } else if (tabId === 'manual') {
           contentContainer.innerHTML = _getManualAttendanceHTML();
           _initCustomSelects(contentContainer);
-          const dateInput = $('#manual-attendance-date');
-          const projectInput = $('#manual-attendance-project');
-
+          const dateInput = $('#manual-attendance-date', contentContainer);
+          const projectInput = $('#manual-attendance-project', contentContainer);
           dateInput.addEventListener('change', () => _renderManualAttendanceList(dateInput.value, projectInput.value));
           projectInput.addEventListener('change', () => _renderManualAttendanceList(dateInput.value, projectInput.value));
           if (!isViewer()) $('#manual-attendance-form').addEventListener('submit', handleSaveManualAttendance);
@@ -4922,29 +5020,30 @@ async function handleCheckOut(recordLocalId) {
 }
 
 function _getManualAttendanceHTML() {
-  const today = new Date().toISOString().slice(0, 10);
-  const projectOptions = appState.projects.map(p => ({
-      value: p.id,
-      text: p.projectName
-  }));
-  return `
-          <form id="manual-attendance-form" data-async="true" method="POST" data-endpoint="/api/attendance/manual" data-success-msg="Absensi disimpan">
-              <div class="card card-pad">
-                  <div class="recap-filters">
-                      <div class="form-group">
-                          <label for="manual-attendance-date">Tanggal</label>
-                          <input type="date" id="manual-attendance-date" value="${today}" required ${isViewer()?'disabled' : ''}>
-                      </div>
-                      ${createMasterDataSelect('manual-attendance-project', 'Proyek', projectOptions, appState.projects[0]?.id || '')}
-                  </div>
-              </div>
-              <div id="manual-attendance-list-container" style="margin-top: 1.5rem;"></div>
-              ${isViewer()?'' : `<div class="form-footer-actions">
-                  <button type="submit" class="btn btn-primary">Simpan Absensi</button>
-              </div>`}
-          </form>
-      `;
-}
+    const today = new Date().toISOString().slice(0, 10);
+    const projectOptions = appState.projects.map(p => ({
+        value: p.id,
+        text: p.projectName
+    }));
+    return `
+            <form id="manual-attendance-form" data-async="true" method="POST" data-endpoint="/api/attendance/manual" data-success-msg="Absensi disimpan">
+                <div class="card card-pad">
+                    <div class="recap-filters">
+                        <div class="form-group">
+                            <label for="manual-attendance-date">Tanggal</label>
+                            <input type="date" id="manual-attendance-date" value="${today}" required ${isViewer()?'disabled' : ''}>
+                        </div>
+                        ${createMasterDataSelect('manual-attendance-project', 'Proyek', projectOptions, appState.projects[0]?.id || '')}
+                    </div>
+                </div>
+                <div id="manual-attendance-list-container" style="margin-top: 1.5rem;"></div>
+                ${isViewer()?'' : `
+                <div class="form-footer-actions" style="margin-top: 1rem;">
+                    <button type="submit" class="btn btn-primary">Simpan Absensi</button>
+                </div>`}
+            </form>
+        `;
+  }
 
 async function _renderManualAttendanceList(dateStr, projectId) {
   const container = $('#manual-attendance-list-container');
@@ -6346,7 +6445,7 @@ async function renderTagihanPage() {
       $("#sub-page-content").innerHTML = _getBillsListHTML(filtered);
       _attachBillSwipeHandlers(); 
     };
-    
+
   const _renderCategorySubNavAndList = () => {
       const container = $('#category-sub-nav-container');
       const counts = {
@@ -8179,6 +8278,8 @@ function _updateSimulasiTotals() {
 // --- SUB-SEKSI 3.6: LAPORAN & PDF ---
 // GANTI FUNGSI renderLaporanPage DENGAN VERSI BARU INI
 
+// GANTI FUNGSI LAMA renderLaporanPage DENGAN INI
+
 async function renderLaporanPage() {
     const container = $('.page-container');
     updateBreadcrumbFromState();
@@ -8186,14 +8287,21 @@ async function renderLaporanPage() {
     const filterStart = appState.reportFilter?.start || '';
     const filterEnd = appState.reportFilter?.end || '';
   
+    // [PERBAIKAN] Hitung total untuk ringkasan
+    const { incomeData, expenseData } = _getDailyFinancialDataForChart();
+    const totalIncome = incomeData.reduce((a, b) => a + b, 0);
+    const totalExpense = expenseData.reduce((a, b) => a + b, 0);
+  
     container.innerHTML = `
         <div class="card card-pad" style="margin-bottom: 1rem;">
-            <div class="report-filter" style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
-                <input type="date" id="report-start-date" value="${filterStart}">
-                <span>s.d.</span>
-                <input type="date" id="report-end-date" value="${filterEnd}">
+            <div class="report-filter">
+                <div class="date-range-group">
+                    <input type="date" id="report-start-date" value="${filterStart}">
+                    <span>s.d.</span>
+                    <input type="date" id="report-end-date" value="${filterEnd}">
+                </div>
                 <button class="btn btn-secondary" id="apply-report-filter">Terapkan</button>
-                <button id="generate-detailed-report-btn" data-action="open-report-generator" class="btn btn-primary" style="margin-left:auto;">
+                <button id="generate-detailed-report-btn" data-action="open-report-generator" class="btn btn-primary">
                     <span class="material-symbols-outlined">download_for_offline</span>
                     Unduh PDF
                 </button>
@@ -8202,6 +8310,16 @@ async function renderLaporanPage() {
   
         <section class="card card-pad" style="margin-bottom:1rem;">
             <h5 class="section-title-owner" style="margin-top:0;">Tren Pemasukan vs Pengeluaran</h5>
+            <div class="chart-summary-grid">
+                <div class="summary-stat-card">
+                    <span class="label">Total Pemasukan (7 Hari)</span>
+                    <strong class="value positive">${fmtIDR(totalIncome)}</strong>
+                </div>
+                <div class="summary-stat-card">
+                    <span class="label">Total Pengeluaran (7 Hari)</span>
+                    <strong class="value negative">${fmtIDR(totalExpense)}</strong>
+                </div>
+            </div>
             <div style="height: 250px; position: relative;"><canvas id="interactive-bar-chart"></canvas></div>
         </section>
   
@@ -8226,8 +8344,8 @@ async function renderLaporanPage() {
         appState.reportFilter = { start: s, end: e };
         renderLaporanPage();
     });
-  }
-  
+}
+
   async function _renderFinancialSummaryChart() {
   const canvas = $('#financial-summary-chart');
   if (!canvas) return;
@@ -8319,7 +8437,6 @@ function _getDailyFinancialDataForChart() {
     return { labels, incomeData, expenseData };
 }
 
-// [IMPROVE-UI/UX]: Render interactive 7-day bar chart with drill-down
 async function _renderInteractiveBarChart() {
     const canvas = document.getElementById('interactive-bar-chart');
     if (!canvas) return;
@@ -8338,9 +8455,15 @@ async function _renderInteractiveBarChart() {
             ]
         },
         options: {
+            // [PERBAIKAN] Mengubah orientasi menjadi horizontal
+            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
-            scales: { y: { beginAtZero: true, ticks: { callback: v => fmtIDR(v) } } },
+            scales: { 
+                // [PERBAIKAN] Tukar pengaturan sumbu x dan y
+                x: { beginAtZero: true, ticks: { callback: v => fmtIDR(v) } },
+                y: { grid: { display: false } } // Sembunyikan grid di sumbu y (sekarang label hari)
+            },
             plugins: { tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtIDR(ctx.raw)}` } } },
             onClick: (event, elements) => {
                 if (elements && elements.length > 0) {
@@ -8354,6 +8477,89 @@ async function _renderInteractiveBarChart() {
     });
 }
 
+function animateCountUp(element, endValue) {
+    if (!element) return;
+    
+    const startValue = 0;
+    const duration = 1500; // Durasi animasi dalam milidetik
+    const startTime = performance.now();
+
+    const step = (currentTime) => {
+        const elapsedTime = currentTime - startTime;
+        const progress = Math.min(elapsedTime / duration, 1);
+        
+        // Menggunakan easing function untuk efek perlambatan di akhir
+        const easedProgress = 1 - Math.pow(1 - progress, 3);
+        const currentValue = Math.round(startValue + (endValue * easedProgress));
+
+        element.textContent = fmtIDR(currentValue);
+
+        if (progress < 1) {
+            requestAnimationFrame(step);
+        } else {
+            // Pastikan nilai akhir selalu tepat
+            element.textContent = fmtIDR(endValue);
+        }
+    };
+
+    requestAnimationFrame(step);
+}
+const countUpObserver = new IntersectionObserver((entries, observer) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const element = entry.target;
+            const endValue = parseFloat(element.dataset.countupTo);
+            
+            animateCountUp(element, endValue);
+            
+            // Hentikan pengamatan setelah animasi berjalan sekali
+            observer.unobserve(element);
+        }
+    });
+}, {
+    threshold: 0.5 // Memicu saat 50% elemen terlihat
+});
+
+function _showDailyTransactionDetailsModal(date) {
+    const dateString = date.toISOString().slice(0, 10);
+    const formattedDate = date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    
+    const dailyIncomes = (appState.incomes || []).filter(i => _getJSDate(i.date).toISOString().slice(0, 10) === dateString);
+    const dailyExpenses = (appState.expenses || []).filter(e => _getJSDate(e.date).toISOString().slice(0, 10) === dateString);
+    
+    const createListHTML = (items, type) => {
+        if (items.length === 0) return '';
+        const listItemsHTML = items.map(item => {
+            const title = item.description || (type === 'Pemasukan' ? 'Penerimaan Termin' : 'Pengeluaran Umum');
+            const amountClass = type === 'Pemasukan' ? 'positive' : 'negative';
+            return `
+                <div class="dense-list-item">
+                    <div class="item-main-content">
+                        <strong class="item-title">${title}</strong>
+                    </div>
+                    <div class="item-actions">
+                        <strong class="item-amount ${amountClass}">${fmtIDR(item.amount)}</strong>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        return `<h5 class="detail-section-title">${type}</h5><div class="dense-list-container">${listItemsHTML}</div>`;
+    };
+
+    const hasTransactions = dailyIncomes.length > 0 || dailyExpenses.length > 0;
+    const emptyStateHTML = !hasTransactions ? _getEmptyStateHTML({ icon: 'receipt_long', title: 'Tidak Ada Transaksi', desc: 'Tidak ada pemasukan atau pengeluaran pada tanggal ini.' }) : '';
+
+    const modalContent = `
+        <div style="margin-top: -1rem;">
+            ${createListHTML(dailyIncomes, 'Pemasukan')}
+            ${createListHTML(dailyExpenses, 'Pengeluaran')}
+            ${emptyStateHTML}
+        </div>
+    `;
+
+    createModal('dataDetail', { title: `Rincian Transaksi - ${formattedDate}`, content: modalContent });
+}
+
 async function _renderLabaRugiCard(container) {
     if (!container) return;
     
@@ -8362,7 +8568,8 @@ async function _renderLabaRugiCard(container) {
       fetchAndCacheData('incomes', incomesCol),
       fetchAndCacheData('expenses', expensesCol),
       fetchAndCacheData('bills', billsCol),
-      fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date')
+      fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date'),
+      fetchAndCacheData('fundingSources', fundingSourcesCol)
     ]);
    
     const mainProject = appState.projects.find(p => p.projectType === 'main_income');
@@ -8381,113 +8588,301 @@ async function _renderLabaRugiCard(container) {
     const bebanExpenseInternal = (appState.expenses||[]).filter(e => internalProjects.some(p=>p.id===e.projectId) && inRange(e.date)).reduce((s,e)=>s+e.amount,0);
     const bebanInternal = bebanExpenseInternal + bebanGajiInternal;
     const labaKotor = pendapatan - hpp;
-    const labaBersih = labaKotor - bebanOperasional - bebanInternal;
+    
+    // [REVISI] Menghitung KESELURUHAN beban bunga (bunga bulanan * tenor)
+    let bebanBunga = 0;
+    (appState.fundingSources || []).filter(s => s.interestType === 'interest' && inRange(s.date)).forEach(s => {
+        const monthlyInterest = (s.totalAmount || 0) * ((s.rate || 0) / 100);
+        const totalLoanInterest = monthlyInterest * (s.tenor || 0); // Dikalikan dengan tenor
+        bebanBunga += totalLoanInterest;
+    });
+  
+    const labaBersih = labaKotor - bebanOperasional - bebanInternal - bebanBunga;
    
     container.innerHTML = `
     <h5 class="report-title">Laba Rugi</h5>
     <div class="report-card-content">
       <dl class="detail-list report-card-details">
-        <div class="detail-list-item interactive" data-action="show-report-detail" data-type="income"><dt>Pendapatan</dt><dd class="positive">${fmtIDR(pendapatan)}</dd></div>
+        <div class="detail-list-item interactive" data-action="show-report-detail" data-type="income">
+            <dt>Pendapatan</dt>
+            <dd class="positive" data-countup-to="${pendapatan}">Rp 0</dd>
+        </div>
         <div class="detail-list-item"><dt>HPP (Total)</dt><dd class="negative">- ${fmtIDR(hpp)}</dd></div>
         <div class="detail-list-item interactive sub-item" data-action="show-report-detail" data-type="expense" data-category="material"><dt>• Material</dt><dd class="negative">- ${fmtIDR(hpp_material)}</dd></div>
         <div class="detail-list-item interactive sub-item" data-action="show-report-detail" data-type="expense" data-category="gaji"><dt>• Gaji</dt><dd class="negative">- ${fmtIDR(hpp_gaji)}</dd></div>
         <div class="detail-list-item interactive sub-item" data-action="show-report-detail" data-type="expense" data-category="lainnya"><dt>• Lainnya</dt><dd class="negative">- ${fmtIDR(hpp_lainnya)}</dd></div>
-        <div class="summary-row"><dt>Laba Kotor</dt><dd>${fmtIDR(labaKotor)}</dd></div>
+        
+        <div class="summary-row">
+            <dt>Laba Kotor</dt>
+            <dd data-countup-to="${labaKotor}">Rp 0</dd>
+        </div>
+        
         <div class="detail-list-item interactive" data-action="show-report-detail" data-type="expense" data-category="operasional"><dt>Beban Operasional</dt><dd class="negative">- ${fmtIDR(bebanOperasional)}</dd></div>
-        <div class="summary-row final"><dt>Laba Bersih</dt><dd class="${labaBersih>=0?'positive':''}">${fmtIDR(labaBersih)}</dd></div>
+        <div class="detail-list-item"><dt>Beban Bunga (Periode Ini)</dt><dd class="negative">- ${fmtIDR(bebanBunga)}</dd></div>
+        
+        <div class="summary-row final">
+            <dt>Laba Bersih</dt>
+            <dd class="${labaBersih>=0?'positive':''}" data-countup-to="${labaBersih}">Rp 0</dd>
+        </div>
       </dl>
       <div class="report-card-chart">
         <canvas id="laba-rugi-donut-chart"></canvas>
       </div>
     </div>
   `;
-  _renderMiniDonut('laba-rugi-donut-chart', ['Material','Gaji','Lainnya'], [hpp_material, hpp_gaji, hpp_lainnya], ['#60a5fa','#f59e0b','#a78bfa']);
-}
+  _renderMiniDonut('laba-rugi-donut-chart', ['Material','Gaji','Lainnya', 'Bunga'], [hpp_material, hpp_gaji, hpp_lainnya, bebanBunga], ['#60a5fa','#f59e0b','#a78bfa', '#ef4444']);
   
-  async function _renderAnalisisBeban(container) {
-    if (!container) return;
-    await Promise.all([ fetchAndCacheData('expenses', expensesCol) ]);
-    const inRange = (d) => { const {start,end}=appState.reportFilter||{}; 
-    const dt=_getJSDate(d); if(start&&dt<new Date(start+'T00:00:00'))return false; if(end&&dt>new Date(end+'T23:59:59'))return false; return true; };
-    const mat = (appState.expenses||[]).filter(e=>e.type==='material'&&inRange(e.date)).reduce((s,e)=>s+(e.amount||0),0);
-    const opr = (appState.expenses||[]).filter(e=>e.type==='operasional'&&inRange(e.date)).reduce((s,e)=>s+(e.amount||0),0);
-    const other = (appState.expenses||[]).filter(e=>e.type==='lainnya'&&inRange(e.date)).reduce((s,e)=>s+(e.amount||0),0);
-  
-    container.innerHTML = `
-    <h5 class="report-title">Analisis Beban</h5>
-    <div class="report-card-content">
-      <dl class="detail-list report-card-details" style="margin:0;">
-        <div class="detail-list-item interactive" data-action="show-report-detail" data-type="expense" data-category="material"><dt>Material</dt><dd class="negative">- ${fmtIDR(mat)}</dd></div>
-        <div class="detail-list-item interactive" data-action="show-report-detail" data-type="expense" data-category="operasional"><dt>Operasional</dt><dd class="negative">- ${fmtIDR(opr)}</dd></div>
-        <div class="detail-list-item interactive" data-action="show-report-detail" data-type="expense" data-category="lainnya"><dt>Lainnya</dt><dd class="negative">- ${fmtIDR(other)}</dd></div>
-      </dl>
-      <div class="report-card-chart"><canvas id="beban-mini-donut"></canvas></div>
-    </div>
-  `;
-  _renderMiniDonut('beban-mini-donut', ['Material','Operasional','Lainnya'], [mat,opr,other], ['#60a5fa','#34d399','#a78bfa']);
-}
-  
-  async function _renderLaporanArusKas(container) {
-    if (!container) return;
-    await Promise.all([ fetchAndCacheData('incomes', incomesCol), fetchAndCacheData('expenses', expensesCol) ]);
-    const inRange = (d) => { const {start,end}=appState.reportFilter||{}; const dt=_getJSDate(d); if(start&&dt<new Date(start+'T00:00:00'))return false; if(end&&dt>new Date(end+'T23:59:59'))return false; return true; };
-    const inc = (appState.incomes||[]).filter(i=>inRange(i.date)).reduce((s,i)=>s+(i.amount||0),0);
-    const exp = (appState.expenses||[]).filter(e=>inRange(e.date)).reduce((s,e)=>s+(e.amount||0),0);
-    const net = inc - exp;
-  
-    container.innerHTML = `
-    <h5 class="report-title">Arus Kas</h5>
-    <div class="report-card-content">
-      <dl class="detail-list report-card-details" style="margin:0;">
-        <div class="detail-list-item interactive" data-action="show-report-detail" data-type="income"><dt>Pemasukan</dt><dd class="positive">${fmtIDR(inc)}</dd></div>
-        <div class="detail-list-item interactive" data-action="show-report-detail" data-type="expense"><dt>Pengeluaran</dt><dd class="negative">- ${fmtIDR(exp)}</dd></div>
-        <div class="summary-row final"><dt>Kas Bersih</dt><dd class="${net>=0?'positive':''}">${fmtIDR(net)}</dd></div>
-      </dl>
-      <div class="report-card-chart"><canvas id="arus-mini-donut"></canvas></div>
-    </div>
-  `;
-  _renderMiniDonut('arus-mini-donut', ['Pemasukan','Pengeluaran'], [inc,exp], ['#22c55e','#ef4444']);
+  // [ANIMASI] Panggil pengamat untuk elemen-elemen baru ini
+  container.querySelectorAll('[data-countup-to]').forEach(el => countUpObserver.observe(el));
 }
 
-  function _renderMiniDonut(canvasId, labels, data, colors) {
-      const c = document.getElementById(canvasId);
-      if (!c) return;
+  async function _renderAnalisisBeban(container) {
+    if (!container) return;
+    
+    await Promise.all([
+        fetchAndCacheData('projects', projectsCol),
+        fetchAndCacheData('bills', billsCol),
+        fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date')
+    ]);
   
-      const total = data.reduce((a, b) => a + b, 0);
-      const centerTextToShow = total > 0 ? '%' : 'N/A';
+    const totals = {
+        main: { material: { paid: 0, unpaid: 0 }, operasional: { paid: 0, unpaid: 0 }, lainnya: { paid: 0, unpaid: 0 }, gaji: { paid: 0, unpaid: 0 } },
+        internal: { material: { paid: 0, unpaid: 0 }, operasional: { paid: 0, unpaid: 0 }, lainnya: { paid: 0, unpaid: 0 }, gaji: { paid: 0, unpaid: 0 } }
+    };
+    const mainProject = appState.projects.find(p => p.projectType === 'main_income');
+    const mainProjectId = mainProject?.id;
+    const attendanceMap = new Map(appState.attendanceRecords.map(rec => [rec.id, rec]));
   
-      if (c._chart) c._chart.destroy();
-      
-      c._chart = new Chart(c.getContext('2d'), {
-          type: 'doughnut',
-          data: { 
-              labels: labels, 
-              datasets: [{ data: data, backgroundColor: colors, borderWidth: 0 }] 
-          },
-          options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              cutout: '70%',
-              plugins: {
-                  legend: { display: false },
-                  tooltip: {
-                      enabled: true, // Tooltip diaktifkan
-                      callbacks: {
-                          label: function(context) {
-                              const label = context.label || '';
-                              const value = context.raw || 0;
-                              const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
-                              return `${label}: ${percentage}%`; // Format: "Nama: 50.5%"
-                          }
-                      }
-                  },
-                  centerText: {
-                      text: centerTextToShow
-                  }
-              }
-          }
-      });
+    appState.bills.forEach(bill => {
+        if (bill.type === 'gaji') {
+            (bill.recordIds || []).forEach(recordId => {
+                const record = attendanceMap.get(recordId);
+                if (record) {
+                    const projectGroup = (record.projectId === mainProjectId) ? 'main' : 'internal';
+                    const statusGroup = bill.status === 'paid' ? 'paid' : 'unpaid';
+                    totals[projectGroup].gaji[statusGroup] += record.totalPay || 0;
+                }
+            });
+        } else {
+            const projectGroup = (bill.projectId === mainProjectId) ? 'main' : 'internal';
+            if (totals[projectGroup] && totals[projectGroup][bill.type]) {
+                if (bill.status === 'paid') totals[projectGroup][bill.type]['paid'] += (bill.amount || 0);
+                else totals[projectGroup][bill.type]['unpaid'] += (bill.amount || 0);
+            }
+        }
+    });
+  
+    const generateBebanRowsHTML = (data) => {
+        const categories = [{ key: 'material', label: 'Beban Material' }, { key: 'gaji', label: 'Beban Gaji' }, { key: 'operasional', label: 'Beban Operasional' }, { key: 'lainnya', label: 'Beban Lainnya' }];
+        return categories.map(cat => {
+            const item = data[cat.key];
+            const total = item.paid + item.unpaid;
+            if (total === 0) return '';
+            return `<div class="category-title"><dt>${cat.label}</dt><dd class="negative">- ${fmtIDR(total)}</dd></div><div class="sub-item"><dt>• Lunas</dt><dd>${fmtIDR(item.paid)}</dd></div><div class="sub-item"><dt>• Belum Lunas</dt><dd>${fmtIDR(item.unpaid)}</dd></div>`;
+        }).join('');
+    };
+  
+    const totalBebanMain = Object.values(totals.main).reduce((sum, cat) => sum + cat.paid + cat.unpaid, 0);
+    const totalBebanInternal = Object.values(totals.internal).reduce((sum, cat) => sum + cat.paid + cat.unpaid, 0);
+    
+    container.innerHTML = `
+    <h5 class="report-title">Analisis Beban Proyek</h5>
+    <div class="report-card-content">
+      <dl class="detail-list report-card-details">
+          <div class="category-title"><dt>Beban Proyek Utama (${mainProject?.projectName || 'N/A'})</dt><dd></dd></div>
+          ${generateBebanRowsHTML(totals.main)}
+          <div class="summary-row">
+              <dt>Total Beban Proyek Utama</dt>
+              <dd class="negative" data-countup-to="${totalBebanMain}">- Rp 0</dd>
+          </div>
+          <div class="category-title"><dt>Beban Proyek Internal</dt><dd></dd></div>
+          ${generateBebanRowsHTML(totals.internal)}
+          <div class="summary-row">
+              <dt>Total Beban Proyek Internal</dt>
+              <dd class="negative" data-countup-to="${totalBebanInternal}">- Rp 0</dd>
+          </div>
+      </dl>
+      <div class="report-card-chart">
+        <canvas id="beban-utama-donut-chart"></canvas>
+      </div>
+    </div>
+  `;
+  _renderMiniDonut('beban-utama-donut-chart', ['Material', 'Gaji', 'Operasional', 'Lainnya'], [totals.main.material.paid + totals.main.material.unpaid, totals.main.gaji.paid + totals.main.gaji.unpaid, totals.main.operasional.paid + totals.main.operasional.unpaid, totals.main.lainnya.paid + totals.main.lainnya.unpaid], ['#60a5fa', '#f59e0b', '#34d399', '#a78bfa']);
+  
+  // [ANIMASI] Panggil pengamat untuk elemen-elemen baru ini
+  container.querySelectorAll('[data-countup-to]').forEach(el => countUpObserver.observe(el));
+}
+
+// GANTI SELURUH FUNGSI _renderLaporanArusKas DENGAN VERSI FINAL INI
+
+async function _renderLaporanArusKas(container) {
+    if (!container) return;
+    
+    await Promise.all([ 
+        fetchAndCacheData('incomes', incomesCol), 
+        fetchAndCacheData('bills', billsCol),
+        fetchAndCacheData('fundingSources', fundingSourcesCol)
+    ]);
+  
+    const inRange = (d) => { 
+        const { start, end } = appState.reportFilter || {}; 
+        const dt = _getJSDate(d); 
+        if (start && dt < new Date(start + 'T00:00:00')) return false; 
+        if (end && dt > new Date(end + 'T23:59:59')) return false; 
+        return true; 
+    };
+  
+    const kasMasukTermin = (appState.incomes || []).filter(i => inRange(i.date)).reduce((sum, i) => sum + (i.amount || 0), 0);
+    const kasMasukPinjaman = (appState.fundingSources || []).filter(f => inRange(f.date)).reduce((sum, f) => sum + (f.totalAmount || 0), 0);
+    const totalKasMasuk = kasMasukTermin + kasMasukPinjaman;
+  
+    const paidBills = (appState.bills || []).filter(b => b.status === 'paid' && inRange(b.paidAt || b.dueDate));
+    const kasKeluarMaterial = paidBills.filter(b => b.type === 'material').reduce((sum, b) => sum + (b.amount || 0), 0);
+    const kasKeluarGaji = paidBills.filter(b => b.type === 'gaji').reduce((sum, b) => sum + (b.amount || 0), 0);
+    const kasKeluarOperasional = paidBills.filter(b => b.type === 'operasional').reduce((sum, b) => sum + (b.amount || 0), 0);
+    const kasKeluarLainnya = paidBills.filter(b => b.type === 'lainnya').reduce((sum, b) => sum + (b.amount || 0), 0);
+    const totalKasKeluar = kasKeluarMaterial + kasKeluarGaji + kasKeluarOperasional + kasKeluarLainnya;
+    const arusKasBersih = totalKasMasuk - totalKasKeluar;
+  
+    container.innerHTML = `
+      <h5 class="report-title">Arus Kas</h5>
+      <div class="report-card-content">
+        <dl class="detail-list report-card-details">
+          <div class="category-title"><dt>Arus Kas Masuk</dt><dd></dd></div>
+          <div class="sub-item"><dt>• Penerimaan Termin</dt><dd class="positive">${fmtIDR(kasMasukTermin)}</dd></div>
+          <div class="sub-item"><dt>• Penerimaan Pinjaman</dt><dd class="positive">${fmtIDR(kasMasukPinjaman)}</dd></div>
+          <div class="summary-row">
+              <dt>Total Arus Kas Masuk</dt>
+              <dd class="positive" data-countup-to="${totalKasMasuk}">Rp 0</dd>
+          </div>
+          
+          <div class="category-title"><dt>Arus Kas Keluar</dt><dd></dd></div>
+          <div class="sub-item"><dt>• Pembayaran Material</dt><dd class="negative">- ${fmtIDR(kasKeluarMaterial)}</dd></div>
+          <div class="sub-item"><dt>• Pembayaran Gaji</dt><dd class="negative">- ${fmtIDR(kasKeluarGaji)}</dd></div>
+          <div class="sub-item"><dt>• Pembayaran Operasional</dt><dd class="negative">- ${fmtIDR(kasKeluarOperasional)}</dd></div>
+          <div class="sub-item"><dt>• Pembayaran Lainnya</dt><dd class="negative">- ${fmtIDR(kasKeluarLainnya)}</dd></div>
+          <div class="summary-row">
+              <dt>Total Arus Kas Keluar</dt>
+              <dd class="negative" data-countup-to="${totalKasKeluar}">- Rp 0</dd>
+          </div>
+  
+          <div class="summary-row final">
+              <dt>Arus Kas Bersih</dt>
+              <dd class="${arusKasBersih >= 0 ? 'positive' : 'negative'}" data-countup-to="${arusKasBersih}">Rp 0</dd>
+          </div>
+        </dl>
+        <div class="report-card-chart">
+          <canvas id="arus-kas-donut-chart"></canvas>
+        </div>
+      </div>
+    `;
+  
+    _renderMiniDonut('arus-kas-donut-chart', ['Pemasukan', 'Pengeluaran'], [totalKasMasuk, totalKasKeluar], ['#22c55e', '#ef4444']);
+    
+    // [ANIMASI] Panggil pengamat untuk elemen-elemen baru ini
+    container.querySelectorAll('[data-countup-to]').forEach(el => countUpObserver.observe(el));
   }
+
+  function _renderMiniDonut(canvasId, labels, data, colors) {
+    const c = document.getElementById(canvasId);
+    if (!c) return;
+
+    if (c._chart) c._chart.destroy();
+    
+    c._chart = new Chart(c.getContext('2d'), {
+        type: 'doughnut',
+        data: { 
+            labels: labels, 
+            datasets: [{ 
+                data: data, 
+                backgroundColor: colors, 
+                borderWidth: 0,
+                hoverOffset: 8
+            }] 
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            // [PERBAIKAN] Tambahkan event handler onClick
+            onClick: (evt, elements) => {
+                const chart = c._chart;
+                if (!elements.length) return;
+
+                const index = elements[0].index;
+                const label = chart.data.labels[index];
+                
+                // Logika untuk menentukan tipe dan kategori berdasarkan label
+                let type = 'expense';
+                let category = label.toLowerCase();
+
+                if (label.toLowerCase() === 'pemasukan') {
+                    type = 'income';
+                    category = null;
+                } else if (label.toLowerCase() === 'pengeluaran') {
+                    type = 'expense';
+                    category = null;
+                }
+                
+                _showChartDrillDownModal(label, type, category);
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    enabled: true,
+                    callbacks: {
+                        label: function(context) {
+                            const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                            const label = context.label || '';
+                            const value = context.raw || 0;
+                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${label}: ${percentage}%`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// [TAMBAHAN BARU] Fungsi untuk menampilkan modal rincian dari klik chart
+function _showChartDrillDownModal(title, type, category) {
+    const { start, end } = appState.reportFilter || {};
+    const inRange = (d) => {
+        const dt = _getJSDate(d);
+        if (start && dt < new Date(start + 'T00:00:00')) return false;
+        if (end && dt > new Date(end + 'T23:59:59')) return false;
+        return true;
+    };
+
+    let items = [];
+    if (type === 'income') {
+        items = (appState.incomes || []).filter(i => inRange(i.date));
+    } else if (type === 'expense') {
+        if (category === 'gaji') {
+            items = (appState.bills || []).filter(b => b.type === 'gaji' && inRange(b.dueDate || b.createdAt)).map(b => ({
+                description: b.description || 'Gaji',
+                date: b.dueDate || b.createdAt || new Date(),
+                amount: b.amount || 0
+            }));
+        } else {
+            items = (appState.expenses || []).filter(e => (!category || e.type === category) && inRange(e.date));
+        }
+    }
+
+    const content = items.length ? 
+        `<div class="dense-list-container">${items.map(it => `
+            <div class="dense-list-item">
+                <div class="item-main-content">
+                    <strong class="item-title">${it.description || (type==='income'?'Pemasukan':'Pengeluaran')}</strong>
+                    <span class="item-subtitle">${_getJSDate(it.date).toLocaleDateString('id-ID')}</span>
+                </div>
+                <div class="item-actions"><strong class="${type==='income'?'positive':'negative'}">${fmtIDR(it.amount || 0)}</strong></div>
+            </div>`).join('')}</div>` 
+        : _getEmptyStateHTML({ icon:'insights', title:'Tidak Ada Data', desc:'Tidak ada transaksi pada periode ini.' });
+
+    createModal('dataDetail', { title: `Rincian: ${title}`, content });
+}
 
   async function handleGenerateReportModal() {
   const reportTypeOptions = [{
@@ -9070,18 +9465,21 @@ function _prepareSimulasiData() {
   };
 }
 async function _createSimulasiPDF() {
-  const danaMasuk = parseFormattedNumber($('#simulasi-dana-masuk').value);
-  if (danaMasuk <= 0 || appState.simulasiState.selectedPayments.size === 0) {
-      toast('error', 'Isi dana masuk dan pilih minimal satu tagihan.');
-      return;
-  }
-  const {
-      groupedByProject,
-      totalAlokasi
-  } = _prepareSimulasiData();
-  const sisaDana = danaMasuk - totalAlokasi;
+    const danaMasuk = parseFormattedNumber($('#simulasi-dana-masuk').value);
+    if (danaMasuk <= 0 || appState.simulasiState.selectedPayments.size === 0) {
+        toast('error', 'Isi dana masuk dan pilih minimal satu tagihan.');
+        return;
+    }
+    
+    toast('syncing', 'Mempersiapkan PDF...');
 
-  const sections = [];
+    try {
+        const { jsPDF } = await import('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+        
+        const { groupedByProject, totalAlokasi } = _prepareSimulasiData();
+        const sisaDana = danaMasuk - totalAlokasi;
+
+        const sections = [];
   const categoryLabels = {
       gaji: 'Rincian Gaji Pekerja',
       fee: 'Rincian Fee Staf',
@@ -9125,11 +9523,15 @@ async function _createSimulasiPDF() {
   }
 
   generatePdfReport({
-      title: 'Laporan Simulasi Alokasi Dana',
-      subtitle: `Dibuat pada: ${new Date().toLocaleDateString('id-ID')}`,
-      filename: `Simulasi-Alokasi-Dana-${new Date().toISOString().slice(0, 10)}.pdf`,
-      sections: sections
-  });
+    title: 'Laporan Simulasi Alokasi Dana',
+    subtitle: `Dibuat pada: ${new Date().toLocaleDateString('id-ID')}`,
+    filename: `Simulasi-Alokasi-Dana-${new Date().toISOString().slice(0, 10)}.pdf`,
+    sections: sections
+});
+} catch (error) {
+toast('error', 'Gagal memuat library PDF. Periksa koneksi Anda.');
+console.error("Gagal memuat atau membuat PDF:", error);
+}
 }
 
 function _getKwitansiHTML(data) {
@@ -9560,19 +9962,20 @@ async function handleProcessIndividualSalaryPayment(form) {
     }
 }
 async function _downloadKwitansiAsPDF(data) {
-    toast('syncing', 'Membuat PDF...');
+    toast('syncing', 'Mempersiapkan PDF...');
     const kwitansiElement = $('#kwitansi-printable-area');
     if (!kwitansiElement) {
         toast('error', 'Gagal menemukan elemen kwitansi.');
         return;
     }
     try {
-        const canvas = await html2canvas(kwitansiElement, {
-            scale: 3,
-            useCORS: true
-        });
+        // REVISI: Muat library saat dibutuhkan
+        const { jsPDF } = await import('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+        const html2canvas = (await import('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js')).default;
+        
+        const canvas = await html2canvas(kwitansiElement, { scale: 3, useCORS: true });
         const imgData = canvas.toDataURL('image/png');
-        const pdf = new jspdf.jsPDF({
+        const pdf = new jsPDF({
             orientation: 'portrait',
             unit: 'mm',
             format: 'a7'
@@ -9604,6 +10007,8 @@ async function _downloadKwitansiAsImage(data) {
         return;
     }
     try {
+        const html2canvas = (await import('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js')).default;
+
         const canvas = await html2canvas(kwitansiElement, {
             scale: 3,
             useCORS: true,
@@ -11128,90 +11533,91 @@ function removeBillRowFromUI(billId) {
 }
 
 async function handleNavigation(navId, opts = {}) {
+    // 1. Validasi: Jangan jalankan jika halaman sama atau sedang transisi
     if (!navId || appState.activePage === navId || isPageTransitioning) return;
 
+    isPageTransitioning = true; // Kunci transisi, cegah klik ganda
     const container = document.querySelector('.page-container');
-    // If no container or reduced motion, fall back to instant navigation
-    const prefersReduced = (() => {
-        try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(_) { return false; }
-    })();
 
-    // Determine effect
-    let effect = 'up'; // [IMPROVE-UI/UX]: default behavior is slide-up
-    if (opts.source === 'quick') {
-        effect = 'fade';
-    } else if (opts.source === 'bottom') {
-        const items = Array.from(document.querySelectorAll('#bottom-nav .nav-item'));
+    // 2. Tentukan arah animasi berdasarkan sumber pemicu
+    let exitClass = 'page-exit-to-left';    // Default keluar ke kiri
+    let enterClass = 'page-enter-from-right'; // Default masuk dari kanan
+
+    if (opts.source === 'bottom' || opts.source === 'history') {
+        const items = Array.from(document.querySelectorAll('#bottom-nav .nav-item, .sidebar-nav-item'));
         const fromIndex = items.findIndex(i => i.dataset.nav === appState.activePage);
         const toIndex = items.findIndex(i => i.dataset.nav === navId);
+
         if (fromIndex > -1 && toIndex > -1) {
-            if (toIndex > fromIndex) effect = 'to-right'; else if (toIndex < fromIndex) effect = 'to-left'; else effect = 'fade';
+            if (toIndex < fromIndex) { // Pindah ke item di sebelah kiri
+                exitClass = 'page-exit-to-right';
+                enterClass = 'page-enter-from-left';
+            }
+            // Jika pindah ke kanan, biarkan default
         }
-    } else if (opts.source === 'history') {
-        const items = Array.from(document.querySelectorAll('#bottom-nav .nav-item'));
-        const fromIndex = items.findIndex(i => i.dataset.nav === appState.activePage);
-        const toIndex = items.findIndex(i => i.dataset.nav === navId);
-        if (fromIndex > -1 && toIndex > -1) {
-            // Back/forward gesture: animate toward the direction of target index
-            effect = (toIndex > fromIndex) ? 'to-right' : (toIndex < fromIndex ? 'to-left' : 'fade');
-        } else {
-            effect = 'fade';
-        }
+    } else if (opts.source === 'quick') { // Untuk aksi cepat di dashboard
+        exitClass = 'page-exit-fade';
+        enterClass = 'page-enter-fade';
     }
 
-    const performEnter = async () => {
-        // Update state and UI
+    // Fungsi ini akan dijalankan SETELAH animasi keluar selesai
+    const performPageEnter = async () => {
+        // 3. Ganti Konten Halaman
         appState.activePage = navId;
         localStorage.setItem('lastActivePage', navId);
-        // Push to History API unless disabled (e.g., popstate)
-        const shouldPush = opts.push !== false;
-        try {
-            if (shouldPush && 'pushState' in history) {
+
+        // Update state di History API jika ini bukan dari tombol back/forward
+        if (opts.push !== false) {
+            try {
                 history.pushState({ page: navId }, '', window.location.href);
-            }
-        } catch (_) {}
+            } catch (_) {}
+        }
+        
         renderBottomNav();
         renderSidebar();
-        try {
-            const maybePromise = renderPageContent();
-            if (maybePromise && typeof maybePromise.then === 'function') {
-                await maybePromise;
-            }
-        } catch (_) {}
-        // Animate enter
-        animatePageEnter(document.querySelector('.page-container'), effect);
-        isPageTransitioning = false;
+        await renderPageContent(); // Ganti konten HTML
+
+        // 4. Animasikan Halaman Baru Masuk
+        // a. Set state awal (di luar layar / transparan)
+        container.classList.add(enterClass);
+
+        // b. Tunggu sesaat agar browser menerapkan state awal di atas
+        requestAnimationFrame(() => {
+            // c. Hapus kelas untuk memicu transisi ke state normal (terlihat di layar)
+            container.classList.remove(enterClass);
+        });
+
+        // 5. Selesaikan transisi setelah animasi masuk selesai
+        const onEnterDone = () => {
+            container.removeEventListener('transitionend', onEnterDone);
+            isPageTransitioning = false;
+        };
+        container.addEventListener('transitionend', onEnterDone, { once: true });
     };
 
-    if (!container || prefersReduced || effect === 'fade') { performEnter(); return; }
-
-    // Exit animation
-    isPageTransitioning = true;
-    const exitClass = effect === 'to-right' ? 'page-exit-right' : 'page-exit-left';
+    // 6. Jalankan Animasi Keluar
     const onExitDone = () => {
         container.removeEventListener('transitionend', onExitDone);
-        performEnter();
+        // Hapus semua kelas animasi keluar sebelum masuk
+        container.classList.remove('page-exit-to-left', 'page-exit-to-right', 'page-exit-fade');
+        performPageEnter();
     };
+
     container.addEventListener('transitionend', onExitDone, { once: true });
-    // Fallback in case transitionend doesn't fire
-    const fallback = setTimeout(() => {
-        if (isPageTransitioning) performEnter();
-    }, 300);
-    const clearFallback = () => clearTimeout(fallback);
-    container.addEventListener('transitionend', clearFallback, { once: true });
-    // Trigger exit state
-    requestAnimationFrame(() => {
-        container.classList.remove('page-exit','page-exit-left','page-exit-right');
-        container.classList.add(exitClass);
-    });
+    container.classList.add(exitClass);
+
+    setTimeout(() => {
+        if (isPageTransitioning) {
+            onExitDone();
+        }
+    }, 250); // Sedikit lebih lama dari durasi transisi
 }
 
-// Public helper so HTML can call onClick="MapsTo('dashboard')"
+
 function MapsTo(pageId) {
     return handleNavigation(pageId, { source: 'map', push: true });
 }
 
-// Initialize session history so system back goes to previous view
 function initHistoryNavigation() {
     if (window.__banplex_history_init) return; // avoid double init
     window.__banplex_history_init = true;
@@ -11696,6 +12102,7 @@ function attachEventListeners() {
 //          SEKSI 5: INISIALISASI APLIKASI
 // =======================================================
 attachEventListeners();
+_initToastSwipeHandler();
 }
 
 main()
