@@ -6344,7 +6344,9 @@ async function renderTagihanPage() {
       }
       setBreadcrumb(parts);
       $("#sub-page-content").innerHTML = _getBillsListHTML(filtered);
-  };
+      _attachBillSwipeHandlers(); 
+    };
+    
   const _renderCategorySubNavAndList = () => {
       const container = $('#category-sub-nav-container');
       const counts = {
