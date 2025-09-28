@@ -1,7 +1,7 @@
 /* =======================================================
  * BanPlex Styles - v9.0 Progressive App
  * ======================================================= */
- :root {
+:root {
   --bg-start: #f0f4f8;
   --bg-end: #d9e2ec;
   --panel: #ffffff;
@@ -22,7 +22,15 @@
   --radius-sm: 10px;
   --radius-lg: 20px;
   --spacing: 1rem;
-  --transition-base: 250ms cubic-bezier(.4,0,.2,1);
+ --transition-base: 250ms cubic-bezier(.4,0,.2,1);
+  /* Motion system */
+  --motion-duration-fast: 150ms;
+  --motion-duration-base: 250ms;
+  --motion-duration-slow: 400ms;
+  --motion-ease-standard: cubic-bezier(.4, 0, .2, 1);
+  --motion-ease-emphasized: cubic-bezier(.2, 0, 0, 1);
+  /* Keep compatibility */
+  --transition-base: var(--motion-duration-base) var(--motion-ease-standard);
   --grad-danger: linear-gradient(135deg, #ef4444 0%, #f87171 100%);
   /* Design tokens for consistency */
   --font-xs: .75rem;
@@ -68,26 +76,41 @@ body::before {
 
 .material-symbols-outlined { font-size: var(--icon-md); line-height: 1; }
 
-html, body { height: 100%; }
-#app-shell { display: flex; min-height: 100svh; }
-.content-wrapper { flex: 1; display: flex; flex-direction: column; min-width: 0; padding-bottom: 0; }
-.content-wrapper::before,
-.content-wrapper::after {
-  content: ""; position: fixed; z-index: 0; pointer-events: none; filter: blur(40px); opacity: .25;
-}
-.content-wrapper::before { top: -80px; right: -60px; width: 260px; height: 260px; background: radial-gradient(closest-side, rgba(14,165,233,.6), transparent 70%); }
-.content-wrapper::after { bottom: -100px; left: -80px; width: 300px; height: 300px; background: radial-gradient(closest-side, rgba(16,185,129,.5), transparent 70%); }
+/* =======================================================
+ * [PERBAIKAN SCROLL] Tata Letak Aplikasi Utama
+ * ======================================================= */
 
-.page-container { padding: var(--spacing); position: relative; overscroll-behavior-y: contain;     overflow-y: auto; /* <-- TAMBAHKAN BARIS INI */
-  -webkit-overflow-scrolling: touch; /* Opsional: Membuat scroll lebih mulus di iOS */
-  flex: 1; min-height: 0;
-  padding-bottom: calc(85px + env(safe-area-inset-bottom, 0px));
+/* Mencegah body itu sendiri yang di-scroll, agar tidak ada scrollbar ganda */
+html, body { 
+  height: 100%; 
+  overflow: hidden;
 }
 
-/* Page Transitions */
+/* Fondasi utama aplikasi sebagai flex container */
+#app-shell {
+  display: flex;
+  height: 100vh; /* Gunakan tinggi viewport penuh */
+}
+
+/* Pembungkus konten yang akan menyusun toolbar dan page-container secara vertikal */
+.content-wrapper {
+  flex: 1; /* Mengisi sisa ruang horizontal */
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* Mencegah konten 'tumpah' ke samping */
+}
+
+/* Area konten utama yang BISA DI-SCROLL */
 .page-container {
-  transition: opacity var(--transition-base), transform var(--transition-base);
-  will-change: opacity, transform;
+  flex: 1; /* KUNCI 1: Membuatnya mengisi semua sisa ruang vertikal */
+  min-height: 0; /* KUNCI 2: Trik flexbox agar bisa menyusut dan mengaktifkan overflow */
+  overflow-y: auto; /* KUNCI 3: Tampilkan scrollbar vertikal jika konten lebih panjang */
+  
+  position: relative;
+  -webkit-overflow-scrolling: touch; /* Scroll lebih mulus di iOS */
+  padding: var(--spacing);
+  /* Memberi ruang di bawah untuk bottom nav agar tidak tertutup */
+  padding-bottom: calc(85px + env(safe-area-inset-bottom, 0px));
 }
 
 /* Enter presets */
@@ -124,6 +147,11 @@ html, body { height: 100%; }
   .page-container { transition: none !important; }
 }
 
+/* Global reduced-motion guard */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
 .toolbar { display: flex; gap: .5rem; align-items: center; margin: .5rem var(--spacing) .5rem var(--spacing); position: relative; z-index: 1; padding: 0; }
 .toolbar.sticky-toolbar { position: static; top: auto; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: none; padding: .5rem var(--spacing); margin: 0 0 .5rem 0; z-index: 1; }
 .dark-theme .toolbar.sticky-toolbar { background: linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.7)); }
@@ -140,11 +168,29 @@ html, body { height: 100%; }
 .toolbar .icon-btn.animating .material-symbols-outlined { transform: rotate(360deg); }
 
 
-/* Micro-interactions & Transitions */
-.btn, .btn-icon, .nav-item, .card { transition: transform .15s ease, box-shadow .15s ease, background-color .2s ease, opacity .2s ease; }
-.btn:active, .btn-icon:active, .nav-item:active { transform: scale(0.98); }
+/* Micro-interactions & Transitions (global, consistent) */
+button, .btn, .btn-icon, .nav-item, a, .card, .clickable {
+  transition:
+    transform var(--motion-duration-base) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-base) var(--motion-ease-standard),
+    background-color var(--motion-duration-base) var(--motion-ease-standard),
+    color var(--motion-duration-base) var(--motion-ease-standard),
+    opacity var(--motion-duration-base) var(--motion-ease-standard),
+    border-color var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+/* Hover: elevate slightly; Active: subtle press */
+.card:hover, .clickable:hover, .btn:hover, .nav-item:hover, a:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.btn-icon:hover { transform: translateY(-2px) scale(1.02); }
+.btn:active, .btn-icon:active, .nav-item:active, .card:active, .clickable:active { transform: scale(0.98); box-shadow: var(--shadow-sm); }
 .fade-in { animation: fadeIn .25s ease both; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Page enter: fade-in + slide-up preset */
+.page-enter-up {
+  opacity: 0;
+  transform: translateY(12px);
+}
 
 /* Badge Styles */
 .badge { display: inline-flex; align-items: center; gap: .25rem; font-size: .65rem; padding: .15rem .4rem; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-muted); color: var(--text-dim); }
@@ -262,12 +308,16 @@ input:disabled, select:disabled, textarea:disabled, button:disabled { opacity: 0
 .confirm-modal-text strong { color: var(--text); font-weight: 600; }
 
 /* Toast/Popup */
-.popup-container { position: fixed; top: -100px; left: 50%; transform: translateX(-50%); z-index: 2000; transition: top 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); pointer-events: none; width: auto; max-width: calc(100% - 2rem); }
-.popup-container.show { top: 1rem; }
-.popup-content { padding: 0.7rem 1.25rem; font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 0.75rem; border-radius: 999px; color: #000; background-color: #ffffff; box-shadow: var(--shadow-lg); pointer-events: auto; white-space: nowrap; }
+/* [IMPROVE-UI/UX]: move to bottom-center above bottom nav, allow swipe */
+.popup-container { position: fixed; bottom: -120px; left: 50%; transform: translateX(-50%); z-index: 2000; transition: bottom 0.35s var(--motion-ease-emphasized), transform 0.2s ease; pointer-events: none; width: auto; max-width: calc(100% - 2rem); }
+.popup-container.show { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
+/* [IMPROVE-UI/UX]: Toast multiline support + squared with rounded corners */
+.popup-content { padding: 0.75rem 1rem; font-size: 0.9rem; font-weight: 500; display: flex; align-items: center; gap: 0.75rem; border-radius: var(--radius-sm); color: #000; background-color: #ffffff; box-shadow: var(--shadow-lg); pointer-events: auto; white-space: normal; max-width: min(380px, calc(100vw - 4rem)); text-align: left; }
 .popup-content .material-symbols-outlined { font-size: 1.25rem; }
 .popup-content .spinner { width: 1.25rem; height: 1.25rem; border-width: 2px; }
-.popup-content p { margin: 0; }
+.popup-content p { margin: 0; line-height: 1.35; }
+.popup-content .toast-close { margin-left: auto; background: none; border: none; cursor: pointer; color: var(--text-dim); display: inline-flex; align-items: center; padding: 2px; border-radius: 6px; }
+.popup-content .toast-close .material-symbols-outlined { font-size: 18px; }
 .popup-container.popup-success .popup-content .material-symbols-outlined { color: var(--success); }
 .popup-container.popup-error .popup-content .material-symbols-outlined { color: var(--danger); }
 .popup-container.popup-warn .popup-content .material-symbols-outlined { color: var(--warn); }
@@ -482,6 +532,41 @@ input:disabled, select:disabled, textarea:disabled, button:disabled { opacity: 0
 .invoice-item-row .item-qty { width: 60px; }
 .invoice-item-row .item-total { grid-column: 1 / 2; align-self: center; font-weight: 700; font-size: 1rem; color: var(--primary); }
 .invoice-item-row .remove-item-btn { grid-column: 2 / 3; align-self: center; justify-self: end; }
+/* [IMPROVE-UI/UX]: Animate new invoice rows */
+.invoice-item-row.new-item { overflow: hidden; }
+
+/* [IMPROVE-UI/UX]: Slide+fade keyframes for invoice rows */
+@keyframes slide-fade-in {
+  from { opacity: 0; transform: translateY(-10px); max-height: 0; }
+  to { opacity: 1; transform: translateY(0); max-height: 150px; }
+}
+.invoice-item-row.new-item {
+  animation: slide-fade-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* [IMPROVE-UI/UX]: Invalid input visuals */
+.is-invalid {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ef4444 20%, transparent);
+}
+.input-error-text {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: #b91c1c;
+}
+
+/* [IMPROVE-UI/UX]: Comments current-user bubble style */
+.comments-list { display: flex; flex-direction: column; gap: .5rem; }
+.comment-item { background: var(--surface-muted); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: .5rem .75rem; max-width: 90%; }
+.comment-item.is-current-user { margin-left: auto; background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: color-mix(in srgb, var(--primary) 40%, var(--line)); }
+.comment-item .comment-meta { display: flex; align-items: center; gap: .5rem; justify-content: space-between; }
+
+/* [IMPROVE-UI/UX]: Empty state component */
+.empty-state-card { text-align: center; padding: 1rem; border-radius: var(--radius); border: 1px solid var(--line); background: var(--panel); color: var(--text-dim); display: grid; justify-items: center; gap: .5rem; }
+.empty-state-card .material-symbols-outlined { font-size: 28px; color: var(--text-dim); }
+.empty-state-card .title { font-weight: 600; color: var(--text); }
+.empty-state-card .desc { font-size: .9rem; }
+.empty-state-card .btn { margin-top: .25rem; }
 .add-item-action { text-align: left; margin-top: 0.5rem; }
 .add-item-action .btn-icon { color: var(--primary); }
 .add-item-action .btn-icon .material-symbols-outlined { font-size: 2rem; }
@@ -558,7 +643,7 @@ input:disabled, select:disabled, textarea:disabled, button:disabled { opacity: 0
 .manual-attendance-item .worker-info strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .manual-attendance-item .worker-info .worker-wage { font-size: .8rem; color: var(--text-dim); }
 .attendance-status-selector { display: flex; gap: .5rem; flex-shrink: 0; }
-.attendance-status-selector label { display: flex; align-items: center; gap: .4rem; cursor: pointer; font-size: .85rem; padding: .4rem .6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); transition: background-color .2s, border-color .2s; }
+.attendance-status-selector label { display: flex; align-items: center; gap: .4rem; cursor: pointer; font-size: .85rem; padding: .4rem .6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); transition: background-color var(--motion-duration-base) var(--motion-ease-standard), border-color var(--motion-duration-base) var(--motion-ease-standard); }
 .attendance-status-selector input[type="radio"] { display: none; }
 .attendance-status-selector input[type="radio"]:checked + span { color: var(--primary); font-weight: 600; }
 .attendance-status-selector label:has(input:checked) { background-color: color-mix(in srgb, var(--primary) 10%, transparent); border-color: var(--primary); }
@@ -1732,14 +1817,15 @@ background: color-mix(in srgb, var(--primary) 10%, transparent);
           height: 12px;
           border: solid white;
           border-width: 0 3px 3px 0;
-          transform: rotate(45deg);
+          transform: rotate(45deg) scale(0);
           opacity: 0; /* Sembunyikan secara default */
-          transition: opacity 0.2s ease;
+          transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       }
 
       .fee-alloc-checkbox:checked + .custom-checkbox-visual::after {
           /* Tampilkan tanda centang saat checkbox dicentang */
           opacity: 1;
+          transform: rotate(45deg) scale(1);
       }
       
       /* [Opsional] Menambahkan sedikit jarak antara checkbox dan teks */
@@ -1796,7 +1882,6 @@ background: color-mix(in srgb, var(--primary) 10%, transparent);
   font-weight: 600;
 }
 
-/* === Gaya untuk Sub-Item di Detail List Laporan === */
 .detail-list .sub-item dt,
 .detail-list .sub-item dd {
     padding-left: 1.5rem; /* Memberi efek menjorok ke dalam */
@@ -1807,7 +1892,6 @@ background: color-mix(in srgb, var(--primary) 10%, transparent);
 .detail-list .sub-item dd {
     font-weight: 500; /* Dibuat tidak setebal angka total */
 }
-
 .estimasi-item { display: flex; align-items: center; justify-content: space-between; padding: 1rem; margin-bottom: 0.5rem; }
 .estimasi-info { display: flex; flex-direction: column; }
 .estimasi-info span { font-size: 0.8rem; color: var(--text-dim); }
@@ -2950,4 +3034,150 @@ body.pending-mode .sidebar {
 /* State saat kartu digeser terbuka */
 .card-swipe-container.open .card-swipe-content {
   transform: translateX(-140px); /* Geser sejauh lebar total 2 tombol */
+}
+
+/* [IMPROVE-UI/UX]: Merapikan Tampilan Riwayat Pembayaran */
+
+/* Hapus border default dari .detail-list dan beri nama kelas khusus */
+.detail-list.custom-payment-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0; /* Hilangkan gap agar border menyatu */
+}
+.detail-list.custom-payment-history .payment-history-item {
+  padding: 0;
+  border: none;
+}
+
+/* Setiap baris item pembayaran */
+.payment-history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 0; /* Padding atas dan bawah, tanpa padding samping */
+  border-bottom: 1px solid var(--line);
+  gap: 1rem;
+}
+.custom-payment-history div:last-child.payment-history-item {
+  border-bottom: none; /* Hilangkan border untuk item terakhir */
+}
+
+/* Grup di sisi kiri (Tanggal & Nama) */
+.payment-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem; /* Jarak antara tanggal dan nama */
+}
+
+.payment-date {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.payment-recipient {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Menambahkan ikon diamond kecil sebelum nama */
+.payment-recipient::before {
+  content: '◆';
+  font-size: 0.6rem;
+  color: var(--primary);
+  opacity: 0.8;
+}
+
+/* Jumlah di sisi kanan */
+.payment-amount {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.report-cards-grid { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+@media (min-width: 640px) { .report-cards-grid { grid-template-columns: 1fr 1fr; } }
+@media (min-width: 1024px) { .report-cards-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* ===== [PERBAIKAN FINAL] TATA LETAK KARTU LAPORAN RESPONSIF ===== */
+
+/* 1. Aturan dasar untuk MOBILE (Konten ditumpuk ke bawah) */
+.report-card-content {
+  display: flex;
+  flex-direction: column; /* Ini membuat detail dan chart tersusun vertikal */
+  gap: 1rem;
+}
+
+.report-card-details {
+  flex: 1; /* Biarkan bagian detail mengisi ruang yang tersedia */
+}
+
+.report-card-chart {
+  width: 100%;
+  max-width: 200px; /* Batasi lebar chart di mobile agar tidak terlalu besar */
+  height: 120px;
+  margin: 0 auto; /* Pusatkan chart di tengah */
+  position: relative;
+}
+
+/* 2. Aturan untuk DESKTOP (Konten bersebelahan) */
+@media (min-width: 640px) {
+  .report-card-content {
+    flex-direction: row; /* Ubah susunan menjadi horizontal */
+    align-items: center;
+  }
+ 
+  .report-card-chart {
+    margin: 0; /* Hapus margin auto agar menempel di kanan */
+    max-width: 160px; /* Sedikit lebih kecil di desktop */
+  }
+}
+
+/* Normalisasi baris item di dalam <dl> agar rapih dan tidak overflow */
+.detail-list > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .5rem;
+}
+.detail-list dt {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.detail-list dd {
+    margin: 0;
+    white-space: nowrap;
+    text-align: right;
+}
+
+/* Aturan untuk Ringkasan */
+.detail-list .summary-row {
+  background-color: var(--surface-muted);
+  margin: .5rem -1.25rem;
+  padding: .8rem 1.25rem;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-weight: 700;
+}
+.detail-list .summary-row.final {
+  font-size: 1.05rem;
+}
+/* style.css */
+
+/* [TAMBAHAN] Memberi petunjuk visual pada baris yang bisa diklik */
+.detail-list-item.interactive {
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.detail-list-item.interactive:hover {
+  background-color: var(--surface-muted);
 }
