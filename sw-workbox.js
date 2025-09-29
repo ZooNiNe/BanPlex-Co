@@ -5,10 +5,8 @@ if (workbox) {
   console.log(`Workbox berhasil dimuat.`);
   
   workbox.core.clientsClaim();
+  self.skipWaiting();
 
-  // --- PRE-CACHING ---
-  // Workbox akan secara otomatis menangani versi dan pembersihan cache lama
-  // untuk file-file yang ada di dalam daftar ini.
   workbox.precaching.precacheAndRoute([
     // Aset Inti (App Shell)
     { url: './', revision: null },

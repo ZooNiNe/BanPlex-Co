@@ -37,7 +37,9 @@ import {
   increment,
   Timestamp,
   initializeFirestore,
-  persistentLocalCache
+  persistentLocalCache,
+  limit,
+  startAfter
 } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
 import {
   getStorage,
@@ -168,55 +170,70 @@ async function main() {
   };
 
   const appState = {
-      currentUser: null,
-      userRole: 'Guest',
-      userStatus: null,
-      justLoggedIn: false,
-      pendingUsersCount: 0,
-      activePage: localStorage.getItem('lastActivePage') || 'dashboard',
-      activeSubPage: new Map(),
-      isOnline: navigator.onLine,
-      isSyncing: false,
-      comments: [],
-      projects: [],
-      clients: [],
-      fundingCreditors: [],
-      operationalCategories: [],
-      materialCategories: [],
-      otherCategories: [],
-      suppliers: [],
-      workers: [],
-      professions: [],
-      incomes: [],
-      fundingSources: [],
-      expenses: [],
-      bills: [],
-      attendance: new Map(),
-      users: [],
-      materials: [],
-      stockTransactions: [],
-      attendanceRecords: [],
-      staff: [],
-      selectionMode: {
-          active: false,
-          selectedIds: new Set(),
-          pageContext: ''
-      },
-      billsFilter: {
-          searchTerm: '',
-          projectId: 'all',
-          supplierId: 'all',
-          sortBy: 'dueDate',
-          sortDirection: 'desc',
-          category: 'all'
-      },
-      pdfSettings: null,
-      simulasiState: {
-          selectedPayments: new Map()
-    }
+    currentUser: null,
+    userRole: 'Guest',
+    userStatus: null,
+    justLoggedIn: false,
+    pendingUsersCount: 0,
+    activePage: localStorage.getItem('lastActivePage') || 'dashboard',
+    activeSubPage: new Map(),
+    isOnline: navigator.onLine,
+    isSyncing: false,
+    comments: [],
+    projects: [],
+    clients: [],
+    fundingCreditors: [],
+    operationalCategories: [],
+    materialCategories: [],
+    otherCategories: [],
+    suppliers: [],
+    workers: [],
+    professions: [],
+    incomes: [],
+    fundingSources: [],
+    expenses: [],
+    bills: [],
+    attendance: new Map(),
+    users: [],
+    materials: [],
+    stockTransactions: [],
+    attendanceRecords: [],
+    staff: [],
+    tagihan: {
+        currentList: [], // Untuk menyimpan daftar tagihan yang ditampilkan
+    },
+    selectionMode: {
+        active: false,
+        selectedIds: new Set(),
+        pageContext: ''
+    },
+    billsFilter: {
+        searchTerm: '',
+        projectId: 'all',
+        supplierId: 'all',
+        sortBy: 'dueDate',
+        sortDirection: 'desc',
+        category: 'all'
+    },
+    pagination: {
+        bills: {
+            lastVisible: null,
+            isLoading: false,
+            hasMore: true
+        }
+    },
+    dashboardTotals: {
+        labaBersih: 0,
+        totalUnpaid: 0,
+    },
+    pdfSettings: null,
+    simulasiState: {
+        selectedPayments: new Map()
+    },
+    activeListeners: new Map(),
 };
 
-  // =======================================================
+// =======================================================
 //      SEKSI 1.5: DATABASE LOKAL (DEXIE.JS)
 // =======================================================
 const localDB = new Dexie('BanPlexLocalDB');
@@ -975,6 +992,7 @@ async function initializeAppSession(user) {
         $('#global-loader').style.display = 'none';
         $('#app-shell').style.display = 'flex';
         await loadAllLocalDataToState();
+        _calculateAndCacheDashboardTotals();
         renderUI();
         updateSyncIndicator();
         if (appState.justLoggedIn) {
@@ -985,7 +1003,6 @@ async function initializeAppSession(user) {
             await syncFromServer(); 
             await syncToServer(); 
             subscribeToMasterData(); 
-            subscribeToTransactionalData();
         } else {
             toast('info', 'Anda sedang offline. Menampilkan data yang tersimpan di perangkat.');
         }
@@ -1592,6 +1609,134 @@ async function _recalculateAndApplyUsageCounts() {
     }
 }
 
+function _initSelectionMode(containerSelector, pageContext) {
+    const container = $(containerSelector);
+    if (!container) return;
+
+    // Hapus listener lama jika ada untuk mencegah duplikasi
+    if (container._selectionHandlers) {
+        container.removeEventListener('pointerdown', container._selectionHandlers.start);
+    }
+
+    let pressTimer = null;
+    let hasMoved = false;
+
+    const startPress = (e) => {
+        // Jangan mulai timer jika sudah mode seleksi atau targetnya adalah tombol swipe
+        if (appState.selectionMode.active || e.target.closest('.swipe-actions')) return;
+        
+        const card = e.target.closest('.dense-list-item');
+        if (!card) return;
+
+        hasMoved = false;
+        const startX = e.pageX;
+        const startY = e.pageY;
+
+        const cancelOnMove = (moveEvent) => {
+            if (Math.abs(moveEvent.pageX - startX) > 10 || Math.abs(moveEvent.pageY - startY) > 10) {
+                hasMoved = true;
+                clearTimeout(pressTimer);
+                container.removeEventListener('pointermove', cancelOnMove);
+                container.removeEventListener('pointerup', endPressOrLeave);
+            }
+        };
+
+        const endPressOrLeave = () => {
+            clearTimeout(pressTimer);
+            container.removeEventListener('pointermove', cancelOnMove);
+            container.removeEventListener('pointerup', endPressOrLeave);
+        };
+        
+        container.addEventListener('pointermove', cancelOnMove);
+        container.addEventListener('pointerup', endPressOrLeave);
+        container.addEventListener('pointerleave', endPressOrLeave, { once: true });
+        
+        pressTimer = setTimeout(() => {
+            container.removeEventListener('pointermove', cancelOnMove);
+            if (!hasMoved) {
+                appState.selectionMode.active = true;
+                appState.selectionMode.pageContext = pageContext;
+                _toggleCardSelection(card);
+            }
+        }, 500);
+    };
+    
+    // Simpan referensi handler ke elemen
+    container._selectionHandlers = { start: startPress };
+    container.addEventListener('pointerdown', startPress);
+}
+
+function _toggleCardSelection(card) {
+    if (!card || !card.dataset.id) return;
+    const id = card.dataset.id;
+    const { selectedIds } = appState.selectionMode;
+
+    if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+        card.classList.remove('selected');
+    } else {
+        selectedIds.add(id);
+        card.classList.add('selected');
+    }
+
+    if (appState.selectionMode.active && selectedIds.size === 0) {
+        appState.selectionMode.active = false;
+        document.body.classList.remove('selection-active');
+    }
+    
+    _renderSelectionBar();
+}
+
+function _renderSelectionBar() {
+    let bar = $('#selection-bar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'selection-bar';
+        bar.className = 'selection-bar';
+        document.body.appendChild(bar);
+    }
+
+    if (appState.selectionMode.active) {
+        let total = 0;
+        const { selectedIds, pageContext } = appState.selectionMode;
+        
+        // [LOGIKA BARU] Cek dari halaman mana seleksi berasal
+        if (pageContext === 'tagihan') {
+            selectedIds.forEach(id => {
+                const bill = appState.tagihan.currentList.find(b => b.id === id);
+                if(bill) total += (bill.amount - (bill.paidAmount || 0));
+            });
+        } else if (pageContext === 'pemasukan') {
+            const allIncomes = [...appState.incomes, ...appState.fundingSources];
+            selectedIds.forEach(id => {
+                const income = allIncomes.find(i => i.id === id);
+                if(income) total += (income.amount || income.totalAmount || 0);
+            });
+        }
+
+        bar.innerHTML = `
+            <button id="close-selection-btn" class="btn-icon"><span class="material-symbols-outlined">close</span></button>
+            <div class="selection-info">
+                <span id="selection-count">${selectedIds.size} item dipilih</span>
+                <strong id="selection-total">${fmtIDR(total)}</strong>
+            </div>
+        `;
+        document.body.classList.add('selection-active');
+        bar.classList.add('show');
+        
+        $('#close-selection-btn').addEventListener('click', () => {
+            appState.selectionMode.active = false;
+            appState.selectionMode.selectedIds.clear();
+            _renderSelectionBar();
+            // Hapus kelas 'selected' dari semua kartu di halaman aktif
+            $$('.dense-list-item.selected').forEach(card => card.classList.remove('selected'));
+        });
+    } else {
+        document.body.classList.remove('selection-active');
+        bar.classList.remove('show');
+    }
+}
+
 function _renderSparklineChart(canvasId, data, isPositiveGood) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
@@ -1748,40 +1893,135 @@ function subscribeToMasterData() {
     });
 }
 
-// Di script.js, GANTI FUNGSI LAMA DENGAN VERSI BARU INI
+async function _animateTabSwitch(contentContainer, renderNewContentFunc, direction = 'forward') {
+    if (!contentContainer) return;
 
-function subscribeToTransactionalData() {
-    const collectionsToListen = [
-        { name: 'bills', ref: billsCol },
-        { name: 'expenses', ref: expensesCol },
-        { name: 'incomes', ref: incomesCol },
-        { name: 'attendance_records', ref: attendanceRecordsCol },
-        { name: 'comments', ref: commentsCol }
-        // [PERBAIKAN-1] Tidak perlu lagi properti 'page', karena update akan lebih pintar
-    ];
+    // Tentukan kelas animasi berdasarkan arah perpindahan
+    const exitClass = direction === 'forward' ? 'sub-page-exit-to-left' : 'sub-page-exit-to-right';
+    const enterClass = direction === 'forward' ? 'sub-page-enter-from-right' : 'sub-page-enter-from-left';
 
-    collectionsToListen.forEach(collection => {
-        // [PERBAIKAN-2] Hapus query 'where("updatedAt", ">", lastSync)'. 
-        // onSnapshot sudah cukup pintar untuk hanya mengirimkan perubahan.
-        const q = query(collection.ref); // Cukup query ke koleksi itu sendiri.
+    // 1. Mulai animasi keluar pada konten yang ada
+    contentContainer.classList.add(exitClass);
 
-        onSnapshot(q, (snapshot) => {
-            if (snapshot.empty && snapshot.metadata.fromCache) return;
-            console.log(`Menerima ${snapshot.docChanges().length} pembaruan dari: ${collection.name}`);
-            
-            // [PERBAIKAN-3] Proses perubahan secara efisien tanpa memuat ulang semua data.
-            _processRealtimeChanges(snapshot.docChanges(), collection.name);
+    // 2. Tunggu 200ms (sesuai durasi transisi CSS)
+    await new Promise(resolve => setTimeout(resolve, 200));
 
-        }, (error) => {
-            console.error(`Gagal mendengarkan pembaruan dari ${collection.name}:`, error);
-        });
+    // 3. Ganti konten dengan yang baru (setelah konten lama menghilang)
+    await renderNewContentFunc();
+
+    // 4. Siapkan konten baru untuk animasi masuk (masih transparan dan bergeser)
+    contentContainer.classList.remove(exitClass);
+    contentContainer.classList.add(enterClass);
+
+    // 5. Trik agar browser menerapkan style di atas sebelum memulai animasi masuk
+    requestAnimationFrame(() => {
+        // 6. Hapus kelas 'enter' agar konten baru bergerak ke posisi normal
+        contentContainer.classList.remove(enterClass);
     });
 }
 
-// [BARU] Tambahkan fungsi helper baru ini di script.js
-// Fungsi ini menjadi pusat untuk memproses semua perubahan data real-time.
+function _setActiveListeners(requiredListeners = []) {
+    const collectionRefs = {
+        'bills': billsCol,
+        'expenses': expensesCol,
+        'incomes': incomesCol,
+        'attendance_records': attendanceRecordsCol,
+        'comments': commentsCol,
+        // Tambahkan koleksi lain jika perlu di-listen secara real-time
+    };
+
+    const currentActive = Array.from(appState.activeListeners.keys());
+
+    // 1. Matikan listener yang tidak diperlukan lagi
+    currentActive.forEach(listenerName => {
+        if (!requiredListeners.includes(listenerName)) {
+            const unsubscribe = appState.activeListeners.get(listenerName);
+            if (typeof unsubscribe === 'function') {
+                unsubscribe(); // Panggil fungsi unsubscribe dari Firestore
+            }
+            appState.activeListeners.delete(listenerName);
+            console.log(`- Listener untuk '${listenerName}' dinonaktifkan.`);
+        }
+    });
+
+    // 2. Aktifkan listener baru yang dibutuhkan (jika belum aktif)
+    requiredListeners.forEach(listenerName => {
+        if (!appState.activeListeners.has(listenerName)) {
+            const collectionRef = collectionRefs[listenerName];
+            if (collectionRef) {
+                const q = query(collectionRef);
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    if (snapshot.empty && snapshot.metadata.fromCache) return;
+                    console.log(`Menerima ${snapshot.docChanges().length} pembaruan dari: ${listenerName}`);
+                    _processRealtimeChanges(snapshot.docChanges(), listenerName);
+                }, (error) => {
+                    console.error(`Gagal mendengarkan ${listenerName}:`, error);
+                });
+
+                // Simpan fungsi unsubscribe ke pengelola
+                appState.activeListeners.set(listenerName, unsubscribe);
+                console.log(`+ Listener untuk '${listenerName}' diaktifkan.`);
+            }
+        }
+    });
+}
+
+function _calculateAndCacheDashboardTotals() {
+    console.log("Calculating dashboard totals from appState...");
+    // Logika perhitungan ini diambil langsung dari renderDashboardPage
+    const mainProject = appState.projects.find(p => p.projectType === 'main_income');
+    const internalProjects = appState.projects.filter(p => p.id !== mainProject?.id);
+
+    const pendapatan = (appState.incomes || []).filter(i => i.projectId === mainProject?.id).reduce((sum, i) => sum + i.amount, 0);
+    const hpp_material = (appState.expenses || []).filter(e => e.projectId === mainProject?.id && e.type === 'material').reduce((sum, e) => sum + e.amount, 0);
+
+    let hpp_gaji = 0;
+    let bebanGajiInternal = 0;
+    const paidSalaryBills = (appState.bills || []).filter(b => b.type === 'gaji' && b.status === 'paid');
+    const attendanceMap = new Map((appState.attendanceRecords || []).map(rec => [rec.id, rec]));
+
+    paidSalaryBills.forEach(bill => {
+        (bill.recordIds || []).forEach(recordId => {
+            const record = attendanceMap.get(recordId);
+            if (record) {
+                if (record.projectId === mainProject?.id) {
+                    hpp_gaji += record.totalPay || 0;
+                } else {
+                    bebanGajiInternal += record.totalPay || 0;
+                }
+            }
+        });
+    });
+
+    const hpp_lainnya = (appState.expenses || []).filter(e => e.projectId === mainProject?.id && e.type === 'lainnya').reduce((sum, e) => sum + e.amount, 0);
+    const hpp = hpp_material + hpp_gaji + hpp_lainnya;
+    const labaKotor = pendapatan - hpp;
+    const bebanOperasional = (appState.expenses || []).filter(e => e.projectId === mainProject?.id && e.type === 'operasional').reduce((sum, e) => sum + e.amount, 0);
+
+    const bebanExpenseInternal = (appState.expenses || []).filter(e => internalProjects.some(p => p.id === e.projectId)).reduce((sum, e) => sum + e.amount, 0);
+    const bebanInternal = bebanExpenseInternal + bebanGajiInternal;
+
+    const labaBersih = labaKotor - bebanOperasional - bebanInternal;
+    const totalUnpaid = (appState.bills || []).filter(b => b.status === 'unpaid').reduce((sum, b) => sum + (b.amount - (b.paidAmount || 0)), 0);
+
+    // Simpan hasil perhitungan ke state
+    appState.dashboardTotals.labaBersih = labaBersih;
+    appState.dashboardTotals.totalUnpaid = totalUnpaid;
+    
+    console.log("Dashboard totals recalculated and cached:", appState.dashboardTotals);
+    
+    // Jika dashboard sedang terbuka, perbarui angkanya secara live
+    if (appState.activePage === 'dashboard') {
+        const labaEl = document.querySelector('.dashboard-balance-card .value.positive');
+        const unpaidEl = document.querySelector('.dashboard-balance-card .value.negative');
+        if (labaEl) animateNumber(labaEl, labaBersih);
+        if (unpaidEl) animateNumber(unpaidEl, totalUnpaid);
+    }
+}
+
 async function _processRealtimeChanges(changes, collectionName) {
     let hasChanged = false;
+    let needsDashboardRecalc = false;
 
     // Langkah 1: Update database lokal (Dexie) dan state aplikasi secara inkremental
     for (const change of changes) {
@@ -1789,67 +2029,71 @@ async function _processRealtimeChanges(changes, collectionName) {
         const localTable = localDB[collectionName];
         const stateArray = appState[collectionName];
 
-        if (change.type === "added") {
-            await localTable.put(docData);
-            if (stateArray) stateArray.push(docData);
-            hasChanged = true;
-        } 
-        else if (change.type === "modified") {
-            await localTable.put(docData);
-            if (stateArray) {
-                const index = stateArray.findIndex(item => item.id === docData.id);
-                if (index > -1) stateArray[index] = docData;
-                else stateArray.push(docData);
+        // Selalu update database lokal karena 'put' akan menangani tambah/ubah secara otomatis
+        await localTable.put(docData);
+
+        if (stateArray) {
+            const index = stateArray.findIndex(item => item.id === docData.id);
+
+            if (change.type === "added") {
+                // HANYA tambahkan ke daftar jika item benar-benar belum ada
+                if (index === -1) {
+                    stateArray.push(docData);
+                } else {
+                    // Jika sudah ada (kasus sinkronisasi), perbarui saja
+                    stateArray[index] = docData;
+                }
+                hasChanged = true;
             }
-            hasChanged = true;
-        } 
-        else if (change.type === "removed") {
-            await localTable.where('id').equals(docData.id).delete();
-            if (stateArray) {
-                const index = stateArray.findIndex(item => item.id === docData.id);
-                if (index > -1) stateArray.splice(index, 1);
+            else if (change.type === "modified") {
+                // Jika item ditemukan, perbarui. Jika tidak, tambahkan.
+                if (index > -1) {
+                    stateArray[index] = docData;
+                } else {
+                    stateArray.push(docData);
+                }
+                hasChanged = true;
             }
-            hasChanged = true;
+            else if (change.type === "removed") {
+                // Hapus dari database lokal dan dari daftar
+                await localTable.where('id').equals(docData.id).delete();
+                if (index > -1) {
+                    stateArray.splice(index, 1);
+                }
+                hasChanged = true;
+            }
         }
-    }
+
+        // Tandai untuk kalkulasi ulang jika data keuangan berubah
+        if (['incomes', 'expenses', 'bills', 'attendance_records'].includes(collectionName)) {
+            needsDashboardRecalc = true;
+        }
+    } // <-- [PERBAIKAN] Kurung kurawal penutup untuk for loop ditambahkan di sini
 
     if (!hasChanged) return;
 
-    // Langkah 2: Perbarui UI yang relevan berdasarkan halaman yang sedang aktif.
-    // Ini memastikan UI selalu konsisten dengan data terbaru.
+    // Jika ada perubahan data keuangan, hitung ulang total dashboard
+    if (needsDashboardRecalc) {
+        _calculateAndCacheDashboardTotals();
+    }
+
+    // Perbarui UI halaman yang sedang aktif
     switch (appState.activePage) {
-        case 'dashboard':
-            // Perubahan apa pun pada data keuangan harus me-refresh dashboard
-            if (['incomes', 'expenses', 'bills'].includes(collectionName)) {
-                renderDashboardPage();
-            }
-            break;
         case 'laporan':
-            // Perubahan apa pun pada data keuangan harus me-refresh halaman laporan
-            if (['incomes', 'expenses', 'bills'].includes(collectionName)) {
-                renderLaporanPage();
-            }
+            if (needsDashboardRecalc) renderLaporanPage();
             break;
         case 'tagihan':
-            // Perubahan pada tagihan/pengeluaran harus me-refresh halaman tagihan
-            if (['bills', 'expenses'].includes(collectionName)) {
-                renderTagihanPage();
-            }
+            if (['bills', 'expenses'].includes(collectionName)) _renderTagihanContent();
             break;
         case 'jurnal':
-             // Perubahan pada absensi harus me-refresh halaman jurnal
-            if (collectionName === 'attendance_records') {
-                renderJurnalPage();
-            }
+            if (collectionName === 'attendance_records') renderJurnalPage();
             break;
         case 'pemasukan':
-            if (collectionName === 'incomes') {
-                renderPemasukanPage();
-            }
+            if (collectionName === 'incomes') renderPemasukanPage();
             break;
     }
-    
-    // Selalu perbarui UI komentar jika ada perubahan komentar, karena bisa muncul di banyak modal
+
+    // Selalu perbarui UI komentar jika ada perubahan komentar
     if (collectionName === 'comments') {
         const activeModal = document.querySelector('#dataDetail-modal.show');
         if (activeModal) {
@@ -2157,9 +2401,8 @@ function getModalContent(type, data) {
                   </div>`;
   }
 
-  const modalWithHeader = (title, content) => `<div class="modal-content"><div class="modal-header"><h4>${title}</h4><button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button></div><div class="modal-body">${content}</div></div>`;
-  const simpleModal = (title, content, footer) => `<div class="modal-content" style="max-width:400px"><div class="modal-header"><h4>${title}</h4></div><div class="modal-body">${content}</div><div class="modal-footer">${footer}</div></div>`;
-
+const modalWithHeader = (title, content) => `<div class="modal-content"><div class="modal-header"><h4>${title}</h4><button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button></div><div class="modal-body">${content}</div></div>`;
+const simpleModal = (title, content, footer) => `<div class="modal-content simple-modal-content" style="max-width:400px"><div class="modal-header"><h4>${title}</h4></div><div class="modal-body">${content}</div><div class="modal-footer">${footer}</div></div>`;
   if (type === 'login') return simpleModal('Login', '<p>Gunakan akun Google Anda.</p>', '<button id="google-login-btn" class="btn btn-primary">Masuk dengan Google</button>');
   if (type === 'confirmLogout') return simpleModal('Keluar', '<p>Anda yakin ingin keluar?</p>', '<button class="btn btn-secondary" data-close-modal>Batal</button><button id="confirm-logout-btn" class="btn btn-danger">Keluar</button>');
 
@@ -2384,7 +2627,8 @@ onAuthStateChanged(auth, (user) => {
       $('#global-loader').style.display = 'none';
       $('#app-shell').style.display = 'flex';
       renderUI();
-  }
+      _setActiveListeners([]); // Matikan semua listener saat logout
+    }
 });
 
 async function signInWithGoogle() {
@@ -2440,193 +2684,163 @@ async function listenForPendingUsers() {
 // =======================================================
 
 // --- SUB-SEKSI 3.1: DASHBOARD & PENGATURAN ---
+// GANTI SELURUH FUNGSI LAMA renderDashboardPage DENGAN INI
+
 async function renderDashboardPage() {
-  const container = $('.page-container');
+    const container = $('.page-container');
 
-  // Semua data yang diperlukan akan dimuat di sini
-  await Promise.all([
-      fetchAndCacheData('projects', projectsCol, 'projectName'),
-      fetchAndCacheData('incomes', incomesCol),
-      fetchAndCacheData('expenses', expensesCol),
-      fetchAndCacheData('bills', billsCol),
-      fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date')
-  ]);
+    // Data master tetap perlu dimuat untuk bagian lain di dashboard
+    await Promise.all([
+        fetchAndCacheData('projects', projectsCol, 'projectName'),
+        fetchAndCacheData('incomes', incomesCol),
+        fetchAndCacheData('expenses', expensesCol),
+        fetchAndCacheData('bills', billsCol),
+        fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date')
+    ]);
 
-  // --- Memulai Blok Perhitungan Keuangan Inti ---
-  const mainProject = appState.projects.find(p => p.projectType === 'main_income');
-  const internalProjects = appState.projects.filter(p => p.id !== mainProject?.id);
+    // =========================================================================
+    // BLOK PERHITUNGAN INTI DIHAPUS, DIGANTI DENGAN KODE DI BAWAH
+    // =========================================================================
+    // Langsung ambil data total yang sudah dihitung dan disimpan di cache state
+    const { labaBersih, totalUnpaid } = appState.dashboardTotals;
 
-  const pendapatan = appState.incomes.filter(i => i.projectId === mainProject?.id).reduce((sum, i) => sum + i.amount, 0);
-  const hpp_material = appState.expenses.filter(e => e.projectId === mainProject?.id && e.type === 'material').reduce((sum, e) => sum + e.amount, 0);
+    // --- Perhitungan yang spesifik untuk UI Dashboard (tetap di sini) ---
+    const projectsWithBudget = appState.projects.filter(p => p.budget && p.budget > 0).map(p => {
+        const actual = appState.expenses
+            .filter(e => e.projectId === p.id)
+            .reduce((sum, e) => sum + e.amount, 0);
+        const remaining = p.budget - actual;
+        const percentage = p.budget > 0 ? (actual / p.budget) * 100 : 0;
+        return { ...p, actual, remaining, percentage };
+    });
 
-  let hpp_gaji = 0;
-  let bebanGajiInternal = 0;
-  const paidSalaryBills = appState.bills.filter(b => b.type === 'gaji' && b.status === 'paid');
-  const attendanceMap = new Map(appState.attendanceRecords.map(rec => [rec.id, rec]));
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todaysExpenses = appState.expenses.filter(e => _getJSDate(e.date) >= today);
+    const dailyRecap = todaysExpenses.reduce((recap, expense) => {
+        const projectName = appState.projects.find(p => p.id === expense.projectId)?.projectName || 'Lainnya';
+        if (!recap[projectName]) recap[projectName] = 0;
+        recap[projectName] += expense.amount;
+        return recap;
+    }, {});
+    // --- Akhir Blok Perhitungan Spesifik ---
 
-  paidSalaryBills.forEach(bill => {
-      (bill.recordIds || []).forEach(recordId => {
-          const record = attendanceMap.get(recordId);
-          if (record) {
-              if (record.projectId === mainProject?.id) {
-                  hpp_gaji += record.totalPay || 0;
-              } else {
-                  bebanGajiInternal += record.totalPay || 0;
-              }
-          }
-      });
-  });
+    const trendData = _getDashboardTrendData();
 
-  const hpp_lainnya = appState.expenses.filter(e => e.projectId === mainProject?.id && e.type === 'lainnya').reduce((sum, e) => sum + e.amount, 0);
-  const hpp = hpp_material + hpp_gaji + hpp_lainnya;
-  const labaKotor = pendapatan - hpp;
-  const bebanOperasional = appState.expenses.filter(e => e.projectId === mainProject?.id && e.type === 'operasional').reduce((sum, e) => sum + e.amount, 0);
+    // --- Memulai Blok Pembuatan HTML Lengkap ---
+    const balanceCardsHTML = `
+        <div class="dashboard-balance-grid">
+            <div class="dashboard-balance-card clickable" data-action="navigate" data-nav="laporan">
+                <span class="label">Estimasi Laba Bersih</span>
+                <strong class="value positive">${fmtIDR(labaBersih)}</strong>
+                <div class="sparkline-container">
+                    <canvas id="profit-sparkline-chart"></canvas>
+                </div>
+            </div>
+            <div class="dashboard-balance-card clickable" data-action="navigate" data-nav="tagihan">
+                <span class="label">Tagihan Belum Lunas</span>
+                <strong class="value negative">${fmtIDR(totalUnpaid)}</strong>
+                <div class="sparkline-container">
+                    <canvas id="bills-sparkline-chart"></canvas>
+                </div>
+            </div>
+        </div>`;
 
-  const bebanExpenseInternal = appState.expenses.filter(e => internalProjects.some(p => p.id === e.projectId)).reduce((sum, e) => sum + e.amount, 0);
-  const bebanInternal = bebanExpenseInternal + bebanGajiInternal;
+    const projectBudgetHTML = `
+        <h5 class="section-title-owner">Sisa Anggaran Proyek</h5>
+        <div class="card card-pad">
+            ${projectsWithBudget.length > 0 ? projectsWithBudget.map(p => `
+                <div class="budget-item">
+                    <div class="budget-info">
+                        <span class="project-name">${p.projectName}</span>
+                        <strong class="remaining-amount ${p.remaining < 0 ? 'negative' : ''}">${fmtIDR(p.remaining)}</strong>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" style="width: ${Math.min(p.percentage, 100)}%; background-image: ${p.percentage > 100 ? 'var(--grad-danger)' : 'var(--grad)'};"></div>
+                    </div>
+                    <div class="budget-details">
+                        <span>Terpakai: ${fmtIDR(p.actual)}</span>
+                        <span>Anggaran: ${fmtIDR(p.budget)}</span>
+                    </div>
+                </div>
+            `).join('') : '<p class="empty-state-small">Tidak ada proyek dengan anggaran.</p>'}
+        </div>`;
 
-  const labaBersih = labaKotor - bebanOperasional - bebanInternal;
-  const totalUnpaid = appState.bills.filter(b => b.status === 'unpaid').reduce((sum, b) => sum + (b.amount - (b.paidAmount || 0)), 0);
+    const dailyRecapHTML = `
+         <h5 class="section-title-owner">Rekap Pengeluaran Hari Ini</h5>
+         <div class="card card-pad">
+            ${Object.keys(dailyRecap).length > 0 ? Object.entries(dailyRecap).map(([projectName, total]) => `
+                <div class="daily-recap-item">
+                    <span>${projectName}</span>
+                    <strong>${fmtIDR(total)}</strong>
+                </div>
+            `).join('') : '<p class="empty-state-small">Tidak ada pengeluaran hari ini.</p>'}
+         </div>`;
 
-  const projectsWithBudget = appState.projects.filter(p => p.budget && p.budget > 0).map(p => {
-      const actual = appState.expenses
-          .filter(e => e.projectId === p.id)
-          .reduce((sum, e) => sum + e.amount, 0);
-      const remaining = p.budget - actual;
+    const bottomNavIds = (BOTTOM_NAV_BY_ROLE[appState.userRole] || []);
+    const accessibleLinks = ALL_NAV_LINKS.filter(link =>
+        link.id !== 'dashboard' &&
+        link.roles.includes(appState.userRole) &&
+        !bottomNavIds.includes(link.id)
+    );
+    const mainActionIds = ['tagihan', 'laporan', 'stok', 'pengeluaran'];
+    const mainActions = [];
+    const extraActions = [];
+    accessibleLinks.forEach(link => { if (mainActionIds.includes(link.id)) mainActions.push(link); else extraActions.push(link); });
+    mainActions.sort((a, b) => mainActionIds.indexOf(a.id) - mainActionIds.indexOf(b.id));
 
-      const percentage = p.budget > 0?(actual / p.budget) * 100 : 0;
-      return { ...p,
-          actual,
-          remaining,
-          percentage
-      };
-  });
+    const createActionItemHTML = (link, isExtra = false) => `
+        <button class="dashboard-action-item ${isExtra ? 'action-item-extra' : ''}" data-action="navigate" data-nav="${link.id}">
+            <div class="icon-wrapper"><span class="material-symbols-outlined">${link.icon}</span></div>
+            <span class="label">${link.label}</span>
+        </button>`;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const todaysExpenses = appState.expenses.filter(e => _getJSDate(e.date) >= today);
-  const dailyRecap = todaysExpenses.reduce((recap, expense) => {
-      const projectName = appState.projects.find(p => p.id === expense.projectId)?.projectName || 'Lainnya';
-      if (!recap[projectName]) recap[projectName] = 0;
-      recap[projectName] += expense.amount;
-      return recap;
-  }, {});
-  // --- Akhir Blok Perhitungan Keuangan Inti ---
+    let quickActionsHTML = '';
+    const totalActions = mainActions.length + extraActions.length;
+    if (totalActions > 0) {
+        if (totalActions <= 5) {
+            const all = [...mainActions, ...extraActions];
+            const centerClass = totalActions === 4 ? 'center-4' : totalActions === 3 ? 'center-3' : totalActions === 2 ? 'center-2' : '';
+            quickActionsHTML = `
+                <section class="quick-actions-section">
+                    <h5 class="section-title-owner">Aksi Cepat</h5>
+                    <div id="quick-actions-grid" class="dashboard-actions-grid ${centerClass}">
+                        ${all.map(link => createActionItemHTML(link)).join('')}
+                    </div>
+                </section>`;
+        } else {
+            quickActionsHTML = `
+                <section class="quick-actions-section">
+                    <h5 class="section-title-owner">Aksi Cepat</h5>
+                    <div id="quick-actions-grid" class="dashboard-actions-grid actions-collapsed">
+                        ${mainActions.map(link => createActionItemHTML(link)).join('')}
+                        <button class="dashboard-action-item" data-action="toggle-more-actions">
+                            <div class="icon-wrapper"><span class="material-symbols-outlined">grid_view</span></div>
+                            <span class="label">Lainnya</span>
+                        </button>
+                        ${extraActions.map(link => createActionItemHTML(link, true)).join('')}
+                    </div>
+                </section>`;
+        }
+    }
+    // --- Akhir Blok Pembuatan HTML Lengkap ---
 
-  // Menyiapkan data untuk grafik sparkline
-  const trendData = _getDashboardTrendData();
+    // Merender semua HTML ke dalam container
+    container.innerHTML = balanceCardsHTML + quickActionsHTML + projectBudgetHTML + dailyRecapHTML;
 
-  // --- Memulai Blok Pembuatan HTML ---
-  const balanceCardsHTML = `
-          <div class="dashboard-balance-grid">
-              <div class="dashboard-balance-card clickable" data-action="navigate" data-nav="laporan">
-                  <span class="label">Estimasi Laba Bersih</span>
-                  <strong class="value positive">${fmtIDR(labaBersih)}</strong>
-                  <div class="sparkline-container">
-                      <canvas id="profit-sparkline-chart"></canvas>
-                  </div>
-              </div>
-              <div class="dashboard-balance-card clickable" data-action="navigate" data-nav="tagihan">
-                  <span class="label">Tagihan Belum Lunas</span>
-                  <strong class="value negative">${fmtIDR(totalUnpaid)}</strong>
-                  <div class="sparkline-container">
-                      <canvas id="bills-sparkline-chart"></canvas>
-                  </div>
-              </div>
-          </div>`;
+    // Animate key numbers on dashboard
+    try {
+        const values = container.querySelectorAll('.dashboard-balance-card .value');
+        if (values[0]) animateNumber(values[0], labaBersih);
+        if (values[1]) animateNumber(values[1], totalUnpaid);
+    } catch(_) {}
 
-  const projectBudgetHTML = `
-          <h5 class="section-title-owner">Sisa Anggaran Proyek</h5>
-          <div class="card card-pad">
-              ${projectsWithBudget.length > 0?projectsWithBudget.map(p => `
-                  <div class="budget-item">
-                      <div class="budget-info">
-                          <span class="project-name">${p.projectName}</span>
-                          <strong class="remaining-amount ${p.remaining < 0?'negative' : ''}">${fmtIDR(p.remaining)}</strong>
-                      </div>
-                      <div class="progress-bar-container">
-                          <div class="progress-bar" style="width: ${Math.min(p.percentage, 100)}%; background-image: ${p.percentage > 100?'var(--grad-danger)' : 'var(--grad)'};"></div>
-                      </div>
-                      <div class="budget-details">
-                          <span>Terpakai: ${fmtIDR(p.actual)}</span>
-                          <span>Anggaran: ${fmtIDR(p.budget)}</span>
-                      </div>
-                  </div>
-              `).join('') : '<p class="empty-state-small">Tidak ada proyek dengan anggaran.</p>'}
-          </div>`;
-
-  const dailyRecapHTML = `
-           <h5 class="section-title-owner">Rekap Pengeluaran Hari Ini</h5>
-           <div class="card card-pad">
-              ${Object.keys(dailyRecap).length > 0?Object.entries(dailyRecap).map(([projectName, total]) => `
-                  <div class="daily-recap-item">
-                      <span>${projectName}</span>
-                      <strong>${fmtIDR(total)}</strong>
-                  </div>
-              `).join('') : '<p class="empty-state-small">Tidak ada pengeluaran hari ini.</p>'}
-           </div>`;
-
-  const bottomNavIds = (BOTTOM_NAV_BY_ROLE[appState.userRole] || []);
-  const accessibleLinks = ALL_NAV_LINKS.filter(link =>
-      link.id !== 'dashboard' &&
-      link.roles.includes(appState.userRole) &&
-      !bottomNavIds.includes(link.id)
-  );
-  const mainActionIds = ['tagihan', 'laporan', 'stok', 'pengeluaran'];
-  const mainActions = [];
-  const extraActions = [];
-  accessibleLinks.forEach(link => { if (mainActionIds.includes(link.id)) mainActions.push(link); else extraActions.push(link); });
-  mainActions.sort((a, b) => mainActionIds.indexOf(a.id) - mainActionIds.indexOf(b.id));
-
-  const createActionItemHTML = (link, isExtra = false) => `
-          <button class="dashboard-action-item ${isExtra?'action-item-extra' : ''}" data-action="navigate" data-nav="${link.id}">
-              <div class="icon-wrapper"><span class="material-symbols-outlined">${link.icon}</span></div>
-              <span class="label">${link.label}</span>
-          </button>`;
-
-  let quickActionsHTML = '';
-  const totalActions = mainActions.length + extraActions.length;
-  if (totalActions > 0) {
-      if (totalActions <= 5) {
-          const all = [...mainActions, ...extraActions];
-          const centerClass = totalActions === 4?'center-4' : totalActions === 3?'center-3' : totalActions === 2?'center-2' : '';
-          quickActionsHTML = `
-              <section class="quick-actions-section">
-                  <h5 class="section-title-owner">Aksi Cepat</h5>
-                  <div id="quick-actions-grid" class="dashboard-actions-grid ${centerClass}">
-                      ${all.map(link => createActionItemHTML(link)).join('')}
-                  </div>
-              </section>`;
-      } else {
-          quickActionsHTML = `
-              <section class="quick-actions-section">
-                  <h5 class="section-title-owner">Aksi Cepat</h5>
-                  <div id="quick-actions-grid" class="dashboard-actions-grid actions-collapsed">
-                      ${mainActions.map(link => createActionItemHTML(link)).join('')}
-                      <button class="dashboard-action-item" data-action="toggle-more-actions">
-                          <div class="icon-wrapper"><span class="material-symbols-outlined">grid_view</span></div>
-                          <span class="label">Lainnya</span>
-                      </button>
-                      ${extraActions.map(link => createActionItemHTML(link, true)).join('')}
-                  </div>
-              </section>`;
-      }
-  }
-  // --- Akhir Blok Pembuatan HTML ---
-
-  // Merender semua HTML ke dalam container
-  container.innerHTML = balanceCardsHTML + quickActionsHTML + projectBudgetHTML + dailyRecapHTML;
-
-  // Animate key numbers on dashboard (laba bersih & tagihan belum lunas)
-  try {
-      const values = container.querySelectorAll('.dashboard-balance-card .value');
-      if (values[0]) animateNumber(values[0], labaBersih);
-      if (values[1]) animateNumber(values[1], totalUnpaid);
-  } catch(_) {}
-
-  // Menggambar grafik setelah semua elemen HTML ada di halaman
-  _renderSparklineChart('profit-sparkline-chart', trendData.profit, true);
-  _renderSparklineChart('bills-sparkline-chart', trendData.bills, false);
+    // Menggambar grafik setelah semua elemen HTML ada di halaman
+    _renderSparklineChart('profit-sparkline-chart', trendData.profit, true);
+    _renderSparklineChart('bills-sparkline-chart', trendData.bills, false);
+    
+    // Panggil setActiveListeners
+    _setActiveListeners(['incomes', 'expenses', 'bills', 'attendance_records']);
 }
 
 async function renderPengaturanPage() {
@@ -2724,7 +2938,8 @@ async function renderPengaturanPage() {
               </div>
           ` : ''}
       `;
-}
+      _setActiveListeners([]);
+    }
 
 async function renderLogAktivitasPage() {
   const container = $('.page-container');
@@ -2768,53 +2983,54 @@ async function renderLogAktivitasPage() {
   }).join('');
 
   container.innerHTML = `<div class="log-container">${logHTML}</div>`;
+  _setActiveListeners([]);
 }
 
 // --- SUB-SEKSI 3.2: PEMASUKAN ---
 async function renderPemasukanPage() {
-  const container = $('.page-container');
-  const tabs = [{
-      id: 'termin',
-      label: 'Termin Proyek'
-  }, {
-      id: 'pinjaman',
-      label: 'Pinjaman & Pendanaan'
-  }];
-  container.innerHTML = `
-          <div class="sub-nav two-tabs">
-              ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
-          </div>
-          <div id="sub-page-content"></div>
-      `;
-  const renderTabContent = async (tabId) => {
-      appState.activeSubPage.set('pemasukan', tabId);
-      const contentContainer = $("#sub-page-content");
-      contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+    const container = $('.page-container');
+    const tabs = [{ id: 'termin', label: 'Termin Proyek' }, { id: 'pinjaman', label: 'Pinjaman & Pendanaan' }];
+    container.innerHTML = `
+        <div class="sub-nav two-tabs">
+            ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0 ? 'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
+        </div>
+        <div id="sub-page-content"></div>
+    `;
 
-      let formHTML = '';
-      let listHTML = '<div id="pemasukan-list-container"></div>';
-      if (tabId === 'termin') {
-          await fetchAndCacheData('projects', projectsCol, 'projectName');
-          formHTML = _getFormPemasukanHTML('termin');
-      } else if (tabId === 'pinjaman') {
-          await fetchAndCacheData('fundingCreditors', collection(db, 'teams', TEAM_ID, 'funding_creditors'), 'creditorName');
-          formHTML = _getFormPemasukanHTML('pinjaman');
-      }
+    const renderTabContent = async (tabId) => {
+        appState.activeSubPage.set('pemasukan', tabId);
+        const contentContainer = $("#sub-page-content");
+        contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
 
-  contentContainer.innerHTML = (isViewer()?'' : formHTML) + listHTML;
-  if (!isViewer()) {
-      const formEl = $('#pemasukan-form');
-          if (formEl) {
-              formEl.setAttribute('data-draft-key', `pemasukan-${tabId}`);
-              // _attachFormDraftPersistence(formEl); // This function seems to be missing from the provided file
-          }
-          _attachPemasukanFormListeners();
-      }
-  await _rerenderPemasukanList(tabId);
-}
+        let formHTML = '';
+        let listHTML = '<div id="pemasukan-list-container"></div>';
+        if (tabId === 'termin') {
+            await fetchAndCacheData('projects', projectsCol, 'projectName');
+            formHTML = _getFormPemasukanHTML('termin');
+        } else if (tabId === 'pinjaman') {
+            await fetchAndCacheData('fundingCreditors', collection(db, 'teams', TEAM_ID, 'funding_creditors'), 'creditorName');
+            formHTML = _getFormPemasukanHTML('pinjaman');
+        }
 
-// [IMPROVE-UI/UX]: Real-time comments inside opened detail modal
-try {
+        contentContainer.innerHTML = (isViewer() ? '' : formHTML) + listHTML;
+        if (!isViewer()) {
+            const formEl = $('#pemasukan-form');
+            if (formEl) {
+                formEl.setAttribute('data-draft-key', `pemasukan-${tabId}`);
+                // _attachFormDraftPersistence(formEl); // Fungsi ini tampaknya hilang
+            }
+            _attachPemasukanFormListeners();
+        }
+        await _rerenderPemasukanList(tabId);
+        
+        // [PERBAIKAN KUNCI] Panggil fungsi seleksi & swipe di sini
+        _initSelectionMode('#pemasukan-list-container', 'pemasukan');
+        _attachSwipeHandlers('#pemasukan-list-container');
+        
+        _setActiveListeners(['incomes', 'funding_sources']);
+    };
+    
+    try {
     onSnapshot(commentsCol, async (snapshot) => {
         if (snapshot.empty) return;
         const changes = snapshot.docChanges();
@@ -2894,14 +3110,29 @@ function upsertCommentInUI(a, b, c) {
     } catch (e) { console.warn('upsertCommentInUI error', e); }
 }
 
-$$('.sub-nav-item').forEach(btn => btn.addEventListener('click', (e) => {
-      $$('.sub-nav-item').forEach(b => b.classList.remove('active'));
-      e.currentTarget.classList.add('active');
-      renderTabContent(e.currentTarget.dataset.tab);
-  }));
-  const lastSubPage = appState.activeSubPage.get('pemasukan') || tabs[0].id;
-  $(`.sub-nav-item[data-tab="${lastSubPage}"]`)?.classList.add('active');
-  await renderTabContent(lastSubPage);
+const subNavItems = $$('.sub-nav-item');
+subNavItems.forEach((btn, index) => {
+    btn.addEventListener('click', (e) => {
+        const currentActive = $('.sub-nav-item.active');
+        if (currentActive === btn) return;
+
+        const currentIndex = Array.from(subNavItems).indexOf(currentActive);
+        const direction = index > currentIndex ? 'forward' : 'backward';
+
+        if(currentActive) currentActive.classList.remove('active');
+        btn.classList.add('active');
+
+        _animateTabSwitch(
+            $("#sub-page-content"),
+            () => renderTabContent(btn.dataset.tab),
+            direction
+        );
+    });
+});
+
+const lastSubPage = appState.activeSubPage.get('pemasukan') || tabs[0].id;
+$(`.sub-nav-item[data-tab="${lastSubPage}"]`)?.classList.add('active');
+await renderTabContent(lastSubPage);
 }
 
 async function _rerenderPemasukanList(type) {
@@ -3052,9 +3283,9 @@ function _getListPemasukanHTML(type) {
 
             return `
             <div class="dense-list-item card" data-id="${item.id}">
+                <div class="selection-checkmark"><span class="material-symbols-outlined">check_circle</span></div>
                 <div class="swipe-actions">${swipeActions}</div>
-                <div class="item-main-content" data-action="open-detail" data-id="${item.id}" data-type="${type}">
-                    <strong class="item-title">${title}</strong>
+                <div class="item-main-content" data-action="open-detail" data-id="${item.id}" data-type="${type}">                    <strong class="item-title">${title}</strong>
                     <span class="item-subtitle">${date}</span>
                     <div class="item-details">
                         <strong class="item-amount">${fmtIDR(amount)}</strong>
@@ -3067,76 +3298,87 @@ function _getListPemasukanHTML(type) {
 }
 
 function _attachSwipeHandlers(containerSelector) {
-    let openCard = null;
     const container = document.querySelector(containerSelector);
     if (!container) return;
+
+    if (container._swipeHandlers) {
+        container.removeEventListener('touchstart', container._swipeHandlers.start, { passive: true });
+        container.removeEventListener('touchmove', container._swipeHandlers.move, { passive: true });
+        container.removeEventListener('touchend', container._swipeHandlers.end);
+    }
+    
+    let openCard = null;
+    let startX = 0;
+    let currentX = 0;
+    let isSwiping = false;
 
     const closeOpenCard = () => {
         if (openCard) {
             openCard.classList.remove('swipe-open');
             const content = openCard.querySelector('.item-main-content');
-            if (content) content.style.transform = 'translateX(0)';
+            if (content) content.style.transform = '';
             openCard = null;
         }
     };
 
-    container.addEventListener('touchstart', e => {
+    const onTouchStart = e => {
+        if (appState.selectionMode.active) return;
         const item = e.target.closest('.dense-list-item');
         if (!item || !item.querySelector('.swipe-actions')) return;
-        if (item !== openCard) {
-            closeOpenCard();
-        }
-        item.dataset.startX = e.touches[0].clientX;
-    }, { passive: true });
-
-    container.addEventListener('touchmove', e => {
-        const item = e.target.closest('.dense-list-item');
-        if (!item || !item.dataset.startX) return;
-        const startX = parseFloat(item.dataset.startX);
-        const dx = e.touches[0].clientX - startX;
-        if (dx < 0) {
-            const content = item.querySelector('.item-main-content');
-            if (content) {
-                content.style.transition = 'none';
-                content.style.transform = `translateX(${dx}px)`;
-            }
-        }
-    }, { passive: true });
-
-    container.addEventListener('touchend', e => {
-        const item = e.target.closest('.dense-list-item');
+        if (openCard && openCard !== item) closeOpenCard();
         
+        isSwiping = true;
+        startX = e.touches[0].clientX;
+        currentX = startX;
+        item.querySelector('.item-main-content').style.transition = 'none';
+    };
+
+    const onTouchMove = e => {
+        if (!isSwiping) return;
+        currentX = e.touches[0].clientX;
+        const dx = currentX - startX;
+        const item = e.target.closest('.dense-list-item');
+        if (dx < 0) {
+            item.querySelector('.item-main-content').style.transform = `translateX(${dx}px)`;
+        }
+    };
+
+    const onTouchEnd = e => {
         // [PERBAIKAN KUNCI] Cek apakah sentuhan berakhir di atas tombol aksi.
-        // Jika ya, ini adalah sebuah 'tap' pada tombol, bukan gestur swipe.
-        // Hentikan eksekusi di sini agar event 'click' bisa berjalan normal.
+        // Jika ya, jangan lakukan apa-apa dan biarkan listener 'click' yang bekerja.
         if (e.target.closest('.swipe-actions button, .swipe-actions a')) {
-            // Jangan hapus 'delete item.dataset.startX' agar tidak ada swipe palsu
-            if (item) delete item.dataset.startX;
+            isSwiping = false;
             return; 
         }
 
-        if (!item || !item.dataset.startX) return;
+        if (!isSwiping) return;
+        isSwiping = false;
+
+        const item = e.target.closest('.dense-list-item');
+        if (!item) return;
+
         const content = item.querySelector('.item-main-content');
         if (!content) return;
         
-        content.style.transform = '';
         content.style.transition = '';
-
-        const actions = item.querySelector('.swipe-actions');
-        const actionsWidth = actions ? actions.getBoundingClientRect().width : 120;
-        
-        const startX = parseFloat(item.dataset.startX);
+        const actionsWidth = item.querySelector('.swipe-actions').offsetWidth;
         const dx = e.changedTouches[0].clientX - startX;
 
-        if (dx < -(actionsWidth / 2)) {
-            item.classList.add('swipe-open');
+        if (dx < -(actionsWidth * 0.4)) {
             openCard = item;
+            item.classList.add('swipe-open');
+            content.style.transform = `translateX(-${actionsWidth}px)`;
         } else {
-            item.classList.remove('swipe-open');
             if (openCard === item) openCard = null;
+            item.classList.remove('swipe-open');
+            content.style.transform = '';
         }
-        delete item.dataset.startX;
-    });
+    };
+
+    container._swipeHandlers = { start: onTouchStart, move: onTouchMove, end: onTouchEnd };
+    container.addEventListener('touchstart', onTouchStart, { passive: true });
+    container.addEventListener('touchmove', onTouchMove, { passive: true });
+    container.addEventListener('touchend', onTouchEnd);
 
     if (!window.globalSwipeCloseListener) {
         document.body.addEventListener('click', (e) => {
@@ -3635,6 +3877,8 @@ async function handleAddPemasukan(e) {
 }
 
 // --- SUB-SEKSI 3.3: PENGELUARAN & STOK ---
+// GANTI SELURUH FUNGSI INI
+
 async function renderPengeluaranPage() {
     const container = $('.page-container');
     const tabs = [{
@@ -3659,7 +3903,6 @@ async function renderPengeluaranPage() {
         const contentContainer = $("#sub-page-content");
         contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
 
-        // Muat data master dari localDB terlebih dahulu
         await loadAllLocalDataToState();
 
         let formHTML;
@@ -3671,30 +3914,18 @@ async function renderPengeluaranPage() {
                 categoryLabel = '',
                 categoryType = '';
             if (tabId === 'operasional') {
-                categoryOptions = appState.operationalCategories.map(c => ({
-                    value: c.id,
-                    text: c.categoryName
-                }));
+                categoryOptions = appState.operationalCategories.map(c => ({ value: c.id, text: c.categoryName }));
                 categoryMasterType = 'op-cats';
                 categoryLabel = 'Kategori Operasional';
                 categoryType = 'Operasional';
             } else if (tabId === 'lainnya') {
-                categoryOptions = appState.otherCategories.map(c => ({
-                    value: c.id,
-                    text: c.categoryName
-                }));
+                categoryOptions = appState.otherCategories.map(c => ({ value: c.id, text: c.categoryName }));
                 categoryMasterType = 'other-cats';
                 categoryLabel = 'Kategori Lainnya';
                 categoryType = 'Lainnya';
             }
-            const supplierOptions = appState.suppliers.filter(s => s.category === categoryType).map(s => ({
-                value: s.id,
-                text: s.supplierName
-            }));
-            const projectOptions = appState.projects.map(p => ({
-                value: p.id,
-                text: p.projectName
-            }));
+            const supplierOptions = appState.suppliers.filter(s => s.category === categoryType).map(s => ({ value: s.id, text: s.supplierName }));
+            const projectOptions = appState.projects.map(p => ({ value: p.id, text: p.projectName }));
             formHTML = _getFormPengeluaranHTML(tabId, categoryOptions, categoryMasterType, categoryLabel, supplierOptions, projectOptions);
         }
 
@@ -3708,13 +3939,28 @@ async function renderPengeluaranPage() {
             }
             _attachPengeluaranFormListeners(tabId);
         }
+    };
 
-    }
-    $$('.sub-nav-item').forEach(btn => btn.addEventListener('click', (e) => {
-        $$('.sub-nav-item').forEach(b => b.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-        renderTabContent(e.currentTarget.dataset.tab);
-    }));
+    // [PERUBAHAN] Menerapkan event listener animasi
+    const subNavItems = $$('.sub-nav-item');
+    subNavItems.forEach((btn, index) => {
+        btn.addEventListener('click', (e) => {
+            const currentActive = $('.sub-nav-item.active');
+            if (currentActive === btn) return;
+
+            const currentIndex = Array.from(subNavItems).indexOf(currentActive);
+            const direction = index > currentIndex ? 'forward' : 'backward';
+
+            if(currentActive) currentActive.classList.remove('active');
+            btn.classList.add('active');
+
+            _animateTabSwitch(
+                $("#sub-page-content"),
+                () => renderTabContent(btn.dataset.tab),
+                direction
+            );
+        });
+    });
 
     const lastSubPage = appState.activeSubPage.get('pengeluaran') || tabs[0].id;
     const initialTab = $(`.sub-nav-item[data-tab="${lastSubPage}"]`);
@@ -3723,6 +3969,7 @@ async function renderPengeluaranPage() {
         initialTab.classList.add('active');
     }
     await renderTabContent(lastSubPage);
+    _setActiveListeners(['expenses', 'bills', 'comments']);
 }
 
 function _getFormPengeluaranHTML(type, categoryOptions, categoryMasterType, categoryLabel, supplierOptions, projectOptions) {
@@ -4364,16 +4611,30 @@ async function renderStokPage() {
         else if (tabId === 'estimasi') await _renderEstimasiBelanjaView(contentContainer);
         else if (tabId === 'riwayat') await _renderRiwayatStokView(contentContainer);
     };
+    const subNavItems = $$('.sub-nav-item');
+    subNavItems.forEach((btn, index) => {
+        btn.addEventListener('click', (e) => {
+            const currentActive = $('.sub-nav-item.active');
+            if (currentActive === btn) return;
 
-    $$('.sub-nav-item').forEach(btn => btn.addEventListener('click', (e) => {
-        $$('.sub-nav-item').forEach(b => b.classList.remove('active'));
-        e.currentTarget.classList.add('active');
-        renderTabContent(e.currentTarget.dataset.tab);
-    }));
+            const currentIndex = Array.from(subNavItems).indexOf(currentActive);
+            const direction = index > currentIndex ? 'forward' : 'backward';
+
+            if(currentActive) currentActive.classList.remove('active');
+            btn.classList.add('active');
+
+            _animateTabSwitch(
+                $("#sub-page-content"),
+                () => renderTabContent(btn.dataset.tab),
+                direction
+            );
+        });
+    });
 
     const lastSubPage = appState.activeSubPage.get('stok') || tabs[0].id;
     $(`.sub-nav-item[data-tab="${lastSubPage}"]`)?.classList.add('active');
     await renderTabContent(lastSubPage);
+    _setActiveListeners(['stock_transactions']);
 }
 
 async function _renderDaftarStokView(container) {
@@ -4846,71 +5107,83 @@ async function processStokOut(form) {
 }
 
 // --- SUB-SEKSI 3.4: ABSENSI & JURNAL ---
+// GANTI SELURUH FUNGSI INI
+
 async function renderAbsensiPage() {
-  const container = $('.page-container');
-  const tabs = [{
-      id: 'manual',
-      label: 'Input Manual'
-  }, {
-      id: 'harian',
-      label: 'Absensi Harian'
-  }];
-  container.innerHTML = `
-          ${isViewer()?'' : `<div class="attendance-header">
-               <button class="btn" data-action="manage-master" data-type="workers">
-                  <span class="material-symbols-outlined">engineering</span>
-                  Pekerja
-              </button>
-               <button class="btn" data-action="manage-master" data-type="professions">
-                  <span class="material-symbols-outlined">badge</span>
-                  Profesi
-              </button>
-          </div>`}
-          <div class="sub-nav two-tabs">
-              ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
-          </div>
-          <div id="sub-page-content"></div>
-      `;
+    const container = $('.page-container');
+    const tabs = [{
+        id: 'manual',
+        label: 'Input Manual'
+    }, {
+        id: 'harian',
+        label: 'Absensi Harian'
+    }];
+    container.innerHTML = `
+            ${isViewer()?'' : `<div class="attendance-header">
+                 <button class="btn" data-action="manage-master" data-type="workers"><span class="material-symbols-outlined">engineering</span>Pekerja</button>
+                 <button class="btn" data-action="manage-master" data-type="professions"><span class="material-symbols-outlined">badge</span>Profesi</button>
+            </div>`}
+            <div class="sub-nav two-tabs">
+                ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
+            </div>
+            <div id="sub-page-content"></div>
+        `;
 
-  const renderTabContent = async (tabId) => {
-      appState.activeSubPage.set('absensi', tabId);
-      const contentContainer = $("#sub-page-content");
-      contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+    const renderTabContent = async (tabId) => {
+        appState.activeSubPage.set('absensi', tabId);
+        const contentContainer = $("#sub-page-content");
+        contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
 
-      await Promise.all([
-          fetchAndCacheData('workers', workersCol, 'workerName'),
-          fetchAndCacheData('professions', collection(db, 'teams', TEAM_ID, 'professions'), 'professionName'),
-          fetchAndCacheData('projects', projectsCol, 'projectName')
-      ]);
+        await Promise.all([
+            fetchAndCacheData('workers', workersCol, 'workerName'),
+            fetchAndCacheData('professions', collection(db, 'teams', TEAM_ID, 'professions'), 'professionName'),
+            fetchAndCacheData('projects', projectsCol, 'projectName')
+        ]);
 
-      if (tabId === 'harian') {
-          await _fetchTodaysAttendance();
-          contentContainer.innerHTML = _getDailyAttendanceHTML();
-          _initCustomSelects(contentContainer);
-          contentContainer.querySelector('#attendance-profession-filter')?.addEventListener('change', () => _rerenderAttendanceList());
-          contentContainer.querySelector('#attendance-project-id')?.addEventListener('change', () => _rerenderAttendanceList());
-      } else if (tabId === 'manual') {
-          contentContainer.innerHTML = _getManualAttendanceHTML();
-          _initCustomSelects(contentContainer);
-          const dateInput = $('#manual-attendance-date', contentContainer);
-          const projectInput = $('#manual-attendance-project', contentContainer);
-          dateInput.addEventListener('change', () => _renderManualAttendanceList(dateInput.value, projectInput.value));
-          projectInput.addEventListener('change', () => _renderManualAttendanceList(dateInput.value, projectInput.value));
-          if (!isViewer()) $('#manual-attendance-form').addEventListener('submit', handleSaveManualAttendance);
+        if (tabId === 'harian') {
+            await _fetchTodaysAttendance();
+            contentContainer.innerHTML = _getDailyAttendanceHTML();
+            _initCustomSelects(contentContainer);
+            contentContainer.querySelector('#attendance-profession-filter')?.addEventListener('change', () => _rerenderAttendanceList());
+            contentContainer.querySelector('#attendance-project-id')?.addEventListener('change', () => _rerenderAttendanceList());
+        } else if (tabId === 'manual') {
+            contentContainer.innerHTML = _getManualAttendanceHTML();
+            _initCustomSelects(contentContainer);
+            const dateInput = $('#manual-attendance-date', contentContainer);
+            const projectInput = $('#manual-attendance-project', contentContainer);
+            dateInput.addEventListener('change', () => _renderManualAttendanceList(dateInput.value, projectInput.value));
+            projectInput.addEventListener('change', () => _renderManualAttendanceList(dateInput.value, projectInput.value));
+            if (!isViewer()) $('#manual-attendance-form').addEventListener('submit', handleSaveManualAttendance);
 
-          _renderManualAttendanceList(dateInput.value, projectInput.value);
-      }
-  };
+            _renderManualAttendanceList(dateInput.value, projectInput.value);
+        }
+    };
 
-  $$('.sub-nav-item').forEach(btn => btn.addEventListener('click', (e) => {
-      $$('.sub-nav-item').forEach(b => b.classList.remove('active'));
-      e.currentTarget.classList.add('active');
-      renderTabContent(e.currentTarget.dataset.tab);
-  }));
+    // [PERUBAHAN] Menerapkan event listener animasi
+    const subNavItems = $$('.sub-nav-item');
+    subNavItems.forEach((btn, index) => {
+        btn.addEventListener('click', (e) => {
+            const currentActive = $('.sub-nav-item.active');
+            if (currentActive === btn) return;
 
-  const lastSubPage = appState.activeSubPage.get('absensi') || tabs[0].id;
-  $(`.sub-nav-item[data-tab="${lastSubPage}"]`)?.classList.add('active');
-  await renderTabContent(lastSubPage);
+            const currentIndex = Array.from(subNavItems).indexOf(currentActive);
+            const direction = index > currentIndex ? 'forward' : 'backward';
+
+            if(currentActive) currentActive.classList.remove('active');
+            btn.classList.add('active');
+
+            _animateTabSwitch(
+                $("#sub-page-content"),
+                () => renderTabContent(btn.dataset.tab),
+                direction
+            );
+        });
+    });
+
+    const lastSubPage = appState.activeSubPage.get('absensi') || tabs[0].id;
+    $(`.sub-nav-item[data-tab="${lastSubPage}"]`)?.classList.add('active');
+    await renderTabContent(lastSubPage);
+    _setActiveListeners(['attendance_records']);
 }
 
 function _getDailyAttendanceHTML() {
@@ -5431,74 +5704,110 @@ async function handleSaveManualAttendance(e) {
   }
 }
 
+// GANTI SELURUH FUNGSI INI
 
 async function renderJurnalPage() {
-  const container = $('.page-container');
-  const mainTabs = [{
-      id: 'jurnal_absensi',
-      label: 'Jurnal Absensi'
-  }, {
-      id: 'rekap_gaji',
-      label: 'Rekap Gaji'
-  }];
-  container.innerHTML = `
-          <div class="sub-nav two-tabs">
-              ${mainTabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
-          </div>
-          <div id="sub-page-content"></div>
-      `;
-  const renderMainTabContent = async (mainTabId) => {
-      const mainLabel = mainTabs.find(t => t.id === mainTabId)?.label || '';
-      setBreadcrumb(['Jurnal', mainLabel]);
-      appState.activeSubPage.set('jurnal', mainTabId);
-      const contentContainer = $("#sub-page-content");
-      contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
-      if (mainTabId === 'jurnal_absensi') {
-          _renderJurnalAbsensiTabs(contentContainer);
-      } else if (mainTabId === 'rekap_gaji') {
-          _renderRekapGajiTabs(contentContainer);
-      }
-  };
-  $$('.sub-nav-item').forEach(btn => btn.addEventListener('click', (e) => {
-      $$('.sub-nav-item').forEach(b => b.classList.remove('active'));
-      e.currentTarget.classList.add('active');
-      renderMainTabContent(e.currentTarget.dataset.tab);
-  }));
-  const lastMainTab = appState.activeSubPage.get('jurnal') || mainTabs[0].id;
-  $(`.sub-nav-item[data-tab="${lastMainTab}"]`)?.classList.add('active');
-  await renderMainTabContent(lastMainTab);
+    const container = $('.page-container');
+    const mainTabs = [{
+        id: 'jurnal_absensi',
+        label: 'Jurnal Absensi'
+    }, {
+        id: 'rekap_gaji',
+        label: 'Rekap Gaji'
+    }];
+    container.innerHTML = `
+            <div id="jurnal-main-nav" class="sub-nav two-tabs">
+                ${mainTabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
+            </div>
+            <div id="sub-page-content"></div>
+        `;
+
+    const renderMainTabContent = async (mainTabId) => {
+        const mainLabel = mainTabs.find(t => t.id === mainTabId)?.label || '';
+        setBreadcrumb(['Jurnal', mainLabel]);
+        appState.activeSubPage.set('jurnal', mainTabId);
+        const contentContainer = $("#sub-page-content");
+        contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+        if (mainTabId === 'jurnal_absensi') {
+            _renderJurnalAbsensiTabs(contentContainer);
+        } else if (mainTabId === 'rekap_gaji') {
+            _renderRekapGajiTabs(contentContainer);
+        }
+    };
+
+    // [PERUBAHAN] Menerapkan event listener animasi untuk Tab Utama
+    const mainNavItems = $$('#jurnal-main-nav .sub-nav-item');
+    mainNavItems.forEach((btn, index) => {
+        btn.addEventListener('click', (e) => {
+            const currentActive = $('#jurnal-main-nav .sub-nav-item.active');
+            if (currentActive === btn) return;
+
+            const currentIndex = Array.from(mainNavItems).indexOf(currentActive);
+            const direction = index > currentIndex ? 'forward' : 'backward';
+
+            if(currentActive) currentActive.classList.remove('active');
+            btn.classList.add('active');
+
+            _animateTabSwitch(
+                $("#sub-page-content"),
+                () => renderMainTabContent(btn.dataset.tab),
+                direction
+            );
+        });
+    });
+    
+    const lastMainTab = appState.activeSubPage.get('jurnal') || mainTabs[0].id;
+    $(`.sub-nav-item[data-tab="${lastMainTab}"]`)?.classList.add('active');
+    await renderMainTabContent(lastMainTab);
+    _setActiveListeners(['attendance_records', 'bills']);
 }
 
 function _renderJurnalAbsensiTabs(container) {
-  const tabs = [{
-      id: 'harian',
-      label: 'Harian'
-  }, {
-      id: 'per_pekerja',
-      label: 'Per Pekerja'
-  }];
-  container.innerHTML = `
-          <div id="jurnal-absensi-sub-nav" class="sub-nav two-tabs" style="margin-top: 1rem;">
-               ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
-          </div>
-          <div id="jurnal-absensi-content"></div>
-      `;
-  const renderSubTab = async (tabId) => {
-      const content = $('#jurnal-absensi-content');
-      content.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
-      if (tabId === 'harian') await _renderJurnalHarianView(content);
-      else if (tabId === 'per_pekerja') await _renderJurnalPerPekerjaView(content);
-  };
-  $('#jurnal-absensi-sub-nav').addEventListener('click', e => {
-      const btn = e.target.closest('.sub-nav-item');
-      if (btn) {
-          $('#jurnal-absensi-sub-nav .active').classList.remove('active');
-          btn.classList.add('active');
-          renderSubTab(btn.dataset.tab);
-      }
-  });
-  renderSubTab(tabs[0].id);
+    const tabs = [{
+        id: 'harian',
+        label: 'Harian'
+    }, {
+        id: 'per_pekerja',
+        label: 'Per Pekerja'
+    }];
+    container.innerHTML = `
+            <div id="jurnal-absensi-sub-nav" class="sub-nav two-tabs" style="margin-top: 1rem;">
+                 ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
+            </div>
+            <div id="jurnal-absensi-content"></div>
+        `;
+
+    const renderSubTab = async (tabId) => {
+        const content = $('#jurnal-absensi-content');
+        content.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+        if (tabId === 'harian') await _renderJurnalHarianView(content);
+        else if (tabId === 'per_pekerja') await _renderJurnalPerPekerjaView(content);
+    };
+
+    // [PERUBAHAN] Menerapkan event listener animasi pada sub-tab Jurnal Absensi
+    const subNavItems = $$('#jurnal-absensi-sub-nav .sub-nav-item');
+    subNavItems.forEach((btn, index) => {
+        btn.addEventListener('click', (e) => {
+            const currentActive = $('#jurnal-absensi-sub-nav .sub-nav-item.active');
+            if (currentActive === btn) return;
+
+            const currentIndex = Array.from(subNavItems).indexOf(currentActive);
+            const direction = index > currentIndex ? 'forward' : 'backward';
+
+            if(currentActive) currentActive.classList.remove('active');
+            btn.classList.add('active');
+
+            _animateTabSwitch(
+                $("#jurnal-absensi-content"),
+                () => renderSubTab(btn.dataset.tab),
+                direction
+            );
+        });
+    });
+
+    renderSubTab(tabs[0].id);
 }
+
 async function _renderJurnalHarianView(container) {
   await fetchAndCacheData('attendanceRecords', attendanceRecordsCol, 'date');
   const groupedByDay = _groupAttendanceByDay(appState.attendanceRecords);
@@ -5767,48 +6076,62 @@ async function _renderJurnalPerPekerjaView(container) {
 
 
 async function _renderRekapGajiTabs(container) {
-  const tabs = [{
-      id: 'buat_rekap',
-      label: 'Buat Rekap Baru'
-  }, {
-      id: 'riwayat_rekap',
-      label: 'Riwayat Rekap'
-  }];
-  container.innerHTML = `
-          <div id="rekap-gaji-sub-nav" class="sub-nav two-tabs" style="margin-top: 1rem;">
-               ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
-          </div>
-          <div id="rekap-gaji-content"></div>
-      `;
+    const tabs = [{
+        id: 'buat_rekap',
+        label: 'Buat Rekap Baru'
+    }, {
+        id: 'riwayat_rekap',
+        label: 'Riwayat Rekap'
+    }];
+    container.innerHTML = `
+            <div id="rekap-gaji-sub-nav" class="sub-nav two-tabs" style="margin-top: 1rem;">
+                 ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
+            </div>
+            <div id="rekap-gaji-content"></div>
+        `;
 
-  const renderSubTab = async (tabId) => {
-      const content = $('#rekap-gaji-content');
-      content.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
-      if (tabId === 'buat_rekap') {
-          content.innerHTML = _getSalaryRecapHTML();
-          if (!isViewer()) {
-              $('#generate-recap-btn')?.addEventListener('click', () => {
-                  const startDate = $('#recap-start-date').value;
-                  const endDate = $('#recap-end-date').value;
-                  if (startDate && endDate) generateSalaryRecap(new Date(startDate), new Date(endDate));
-                  else toast('error', 'Silakan pilih rentang tanggal.');
-              });
-          } else {
-              generateSalaryRecap(new Date(new Date().getFullYear(), new Date().getMonth(), 1), new Date());
-          }
-      } else if (tabId === 'riwayat_rekap') {
-          await _renderRiwayatRekapView(content);
-      }
-  };
-  $('#rekap-gaji-sub-nav').addEventListener('click', e => {
-      const btn = e.target.closest('.sub-nav-item');
-      if (btn) {
-          $('#rekap-gaji-sub-nav .active').classList.remove('active');
-          btn.classList.add('active');
-          renderSubTab(btn.dataset.tab);
-      }
-  });
-  await renderSubTab(tabs[0].id);
+    const renderSubTab = async (tabId) => {
+        const content = $('#rekap-gaji-content');
+        content.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+        if (tabId === 'buat_rekap') {
+            content.innerHTML = _getSalaryRecapHTML();
+            if (!isViewer()) {
+                $('#generate-recap-btn')?.addEventListener('click', () => {
+                    const startDate = $('#recap-start-date').value;
+                    const endDate = $('#recap-end-date').value;
+                    if (startDate && endDate) generateSalaryRecap(new Date(startDate), new Date(endDate));
+                    else toast('error', 'Silakan pilih rentang tanggal.');
+                });
+            } else {
+                generateSalaryRecap(new Date(new Date().getFullYear(), new Date().getMonth(), 1), new Date());
+            }
+        } else if (tabId === 'riwayat_rekap') {
+            await _renderRiwayatRekapView(content);
+        }
+    };
+
+    // [PERUBAHAN] Menerapkan event listener animasi pada sub-tab Rekap Gaji
+    const subNavItems = $$('#rekap-gaji-sub-nav .sub-nav-item');
+    subNavItems.forEach((btn, index) => {
+        btn.addEventListener('click', (e) => {
+            const currentActive = $('#rekap-gaji-sub-nav .sub-nav-item.active');
+            if (currentActive === btn) return;
+
+            const currentIndex = Array.from(subNavItems).indexOf(currentActive);
+            const direction = index > currentIndex ? 'forward' : 'backward';
+
+            if(currentActive) currentActive.classList.remove('active');
+            btn.classList.add('active');
+
+            _animateTabSwitch(
+                $("#rekap-gaji-content"),
+                () => renderSubTab(btn.dataset.tab),
+                direction
+            );
+        });
+    });
+    
+    await renderSubTab(tabs[0].id);
 }
 
 function _getSalaryRecapHTML() {
@@ -6376,232 +6699,148 @@ async function _forceResetAttendanceStatus(form) {
 }
 
 // --- SUB-SEKSI 3.5: TAGIHAN & SIMULASI ---
-async function renderTagihanPage() {
-  const container = $('.page-container');
-  updateBreadcrumbFromState();
-  const tabs = [{
-      id: 'unpaid',
-      label: 'Belum Lunas'
-  }, {
-      id: 'paid',
-      label: 'Lunas'
-  }];
-  container.innerHTML = `    <div class="toolbar sticky-toolbar" id="tagihan-toolbar">     <div class="search">
-                  <span class="material-symbols-outlined">search</span>
-                  <input type="search" id="tagihan-search-input" placeholder="Cari tagihan, proyek, supplier..." value="${appState.billsFilter.searchTerm}">
-              </div>
-              <button class="icon-btn" id="tagihan-filter-btn" title="Filter"><span class="material-symbols-outlined">filter_list</span></button>
-              <button class="icon-btn" id="tagihan-sort-btn" title="Urutkan"><span class="material-symbols-outlined">sort</span></button>
-          </div>
-          <div class="sub-nav two-tabs">
-              ${tabs.map((tab, index) => `<button class="sub-nav-item ${index === 0?'active' : ''}" data-tab="${tab.id}">${tab.label}</button>`).join('')}
-          </div>
-          <div id="category-sub-nav-container" class="category-sub-nav"></div>
-          <div id="tagihan-summary-card" class="card card-pad summary-card" style="display: none;"></div>
-          <div id="sub-page-content"><div class="loader-container"><div class="spinner"></div></div></div>
-      `;
+function renderTagihanPageLayout() {
+    const container = $('.page-container');
+    appState.selectionMode = { active: false, selectedIds: new Set(), pageContext: 'tagihan' };
+    _renderSelectionBar();
 
-  await Promise.all([
-      fetchAndCacheData('projects', projectsCol, 'projectName'),
-      fetchAndCacheData('expenses', expensesCol),
-      fetchAndCacheData('suppliers', suppliersCol, 'supplierName'),
-      fetchAndCacheData('workers', workersCol, 'workerName')
-  ]);
+    container.innerHTML = `
+        <div class="toolbar sticky-toolbar" id="tagihan-toolbar">
+            <div class="search"><span class="material-symbols-outlined">search</span><input type="search" id="tagihan-search-input" placeholder="Cari tagihan..." value="${appState.billsFilter.searchTerm}"></div>
+            <button class="btn-icon" id="tagihan-filter-btn" title="Filter"><span class="material-symbols-outlined">filter_list</span></button>
+            <button class="btn-icon" id="tagihan-sort-btn" title="Urutkan"><span class="material-symbols-outlined">sort</span></button>
+        </div>
+        <div id="main-tabs-container" class="sub-nav two-tabs">
+            <button class="sub-nav-item active" data-tab="unpaid">Belum Lunas</button>
+            <button class="sub-nav-item" data-tab="paid">Lunas</button>
+        </div>
+        <div id="category-sub-nav-container" class="category-sub-nav"></div>
+        <div id="sub-page-content"></div>
+    `;
+    _setActiveListeners(['bills', 'expenses', 'comments']);
+    _initTagihanInteractiveListeners(); 
+}
 
-  let currentCombinedList = [];
+async function _renderTagihanContent() {
+    const tabId = $('#main-tabs-container .sub-nav-item.active')?.dataset.tab || 'unpaid';
+    const contentContainer = $("#sub-page-content");
+    if (contentContainer) contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+    appState.expenses = await localDB.expenses.where('isDeleted').notEqual(1).toArray();
 
-  const applyFilterAndSort = () => {
-      let filtered = [...currentCombinedList];
-      if (appState.billsFilter.category !== 'all') {
-          filtered = filtered.filter(item => item.type === appState.billsFilter.category);
-      }
-      if (appState.billsFilter.searchTerm) {
-          const term = appState.billsFilter.searchTerm.toLowerCase();
-          filtered = filtered.filter(item => {
-              const descriptionMatch = item.description.toLowerCase().includes(term);
-              const project = appState.projects.find(p => p.id === item.projectId);
-              const projectMatch = project && project.projectName.toLowerCase().includes(term);
-              let relatedNameMatch = false;
-              if (item.type === 'gaji') {
-                  const worker = appState.workers.find(w => w.id === item.workerId);
-                  relatedNameMatch = worker && worker.workerName.toLowerCase().includes(term);
-              } else if (item.expenseId) {
-                  const expense = appState.expenses.find(e => e.id === item.expenseId);
-                  if (expense && expense.supplierId) {
-                      const supplier = appState.suppliers.find(s => s.id === expense.supplierId);
-                      relatedNameMatch = supplier && supplier.supplierName.toLowerCase().includes(term);
-                  }
-              }
-              return descriptionMatch || projectMatch || relatedNameMatch;
-          });
-      }
-      if (appState.billsFilter.projectId !== 'all') {
-          filtered = filtered.filter(item => item.projectId === appState.billsFilter.projectId);
-      }
-      if (appState.billsFilter.supplierId !== 'all') {
-          filtered = filtered.filter(item => {
-              const expense = appState.expenses.find(e => e.id === item.expenseId);
-              return expense && expense.supplierId === appState.billsFilter.supplierId;
-          });
-      }
+    const billsFromCache = await localDB.bills.where('status').equals(tabId).toArray();
+    let deliveryOrders = [];
+    if (tabId === 'unpaid') {
+        const doFromCache = appState.expenses.filter(e => e.status === 'delivery_order');
+        deliveryOrders = doFromCache.map(d => ({
+            id: `expense-${d.id}`, expenseId: d.id, description: d.description, amount: 0,
+            dueDate: d.date, status: 'delivery_order', type: d.type,
+            projectId: d.projectId, paidAmount: 0
+        }));
+    }
+    
+    appState.tagihan.fullList = [...deliveryOrders, ...billsFromCache];
 
-      filtered.sort((a, b) => {
-          let valA = (appState.billsFilter.sortBy === 'amount')?a.amount : a.dueDate?.seconds || 0;
-          let valB = (appState.billsFilter.sortBy === 'amount')?b.amount : b.dueDate?.seconds || 0;
-          return appState.billsFilter.sortDirection === 'asc'?valA - valB : valB - valA;
-      });
+    const counts = appState.tagihan.fullList.reduce((acc, b) => { acc[b.type] = (acc[b.type] || 0) + 1; return acc; }, {});
+    counts.all = appState.tagihan.fullList.length;
+    
+    const categories = [{ id: 'all', label: 'Semua' }, { id: 'material', label: 'Material' }, { id: 'operasional', label: 'Operasional' }, { id: 'gaji', label: 'Gaji' }, { id: 'fee', label: 'Fee' }, { id: 'lainnya', label: 'Lainnya' }];
+    const categoryNavContainer = $('#category-sub-nav-container');
+    if (categoryNavContainer) {
+        categoryNavContainer.innerHTML = categories
+            .filter(cat => counts[cat.id] > 0)
+            .map(cat => `<button class="sub-nav-item ${appState.billsFilter.category === cat.id ? 'active' : ''}" data-category="${cat.id}">${cat.label}</button>`)
+            .join('');
+    }
 
-      const summaryCard = $('#tagihan-summary-card');
-      if (summaryCard) {
-          const isFiltered = appState.billsFilter.projectId !== 'all' || appState.billsFilter.supplierId !== 'all';
-          if (isFiltered && filtered.length > 0) {
-              const totalAmount = filtered.reduce((sum, item) => sum + item.amount, 0);
-              const totalPaid = filtered.reduce((sum, item) => sum + (item.paidAmount || 0), 0);
-              const remainingAmount = totalAmount - totalPaid;
-              let filterName = '';
-              if (appState.billsFilter.projectId !== 'all') {
-                  filterName = appState.projects.find(p => p.id === appState.billsFilter.projectId)?.projectName || '';
-              } else if (appState.billsFilter.supplierId !== 'all') {
-                  filterName = appState.suppliers.find(s => s.id === appState.billsFilter.supplierId)?.supplierName || '';
-              }
-              summaryCard.innerHTML = `
-                      <h5 class="summary-title">Ringkasan untuk: ${filterName}</h5>
-                      <div class="summary-grid">
-                          <div><span class="label">Total Tagihan</span><strong>${fmtIDR(totalAmount)}</strong></div>
-                          <div><span class="label">Sudah Dibayar</span><strong class="positive">${fmtIDR(totalPaid)}</strong></div>
-                          <div><span class="label">Sisa Tagihan</span><strong class="negative">${fmtIDR(remainingAmount)}</strong></div>
-                      </div>
-                  `;
-              summaryCard.style.display = 'block';
-          } else {
-              summaryCard.style.display = 'none';
-          }
-      }
-      // Breadcrumb dinamis: Tagihan / <Tab> / (Filter)
-      const currentTabId = appState.activeSubPage.get('tagihan');
-      const currentTabLabel = (['unpaid', 'paid'].includes(currentTabId)?(currentTabId === 'unpaid'?'Belum Lunas' : 'Lunas') : '');
-      const parts = ['Tagihan', currentTabLabel];
-      if (appState.billsFilter.projectId !== 'all') {
-          const pj = appState.projects.find(p => p.id === appState.billsFilter.projectId);
-          if (pj) parts.push(pj.projectName);
-      } else if (appState.billsFilter.supplierId !== 'all') {
-          const sp = appState.suppliers.find(s => s.id === appState.billsFilter.supplierId);
-          if (sp) parts.push(sp.supplierName);
-      }
-      setBreadcrumb(parts);
-      $("#sub-page-content").innerHTML = _getBillsListHTML(filtered);
-      _attachSwipeHandlers('#sub-page-content');
-    };
+    _renderFilteredAndPaginatedBills();
+}
 
-  const _renderCategorySubNavAndList = () => {
-      const container = $('#category-sub-nav-container');
-      const counts = {
-          all: currentCombinedList.length,
-          material: currentCombinedList.filter(b => b.type === 'material').length,
-          operasional: currentCombinedList.filter(b => b.type === 'operasional').length,
-          gaji: currentCombinedList.filter(b => b.type === 'gaji').length,
-          lainnya: currentCombinedList.filter(b => b.type === 'lainnya').length
-      };
+function _renderFilteredAndPaginatedBills() {
+    let filtered = [...(appState.tagihan.fullList || [])];
 
-      const categories = [{
-          id: 'all',
-          label: 'Semua'
-      }, {
-          id: 'material',
-          label: 'Material'
-      }, {
-          id: 'operasional',
-          label: 'Operasional'
-      }, {
-          id: 'gaji',
-          label: 'Gaji'
-      }, {
-          id: 'lainnya',
-          label: 'Lainnya'
-      }];
+    const categoryId = appState.billsFilter.category;
+    if (categoryId !== 'all') filtered = filtered.filter(item => item.type === categoryId);
+    if (appState.billsFilter.projectId !== 'all') filtered = filtered.filter(item => item.projectId === appState.billsFilter.projectId);
+    if (appState.billsFilter.supplierId !== 'all') {
+         filtered = filtered.filter(item => {
+            const expense = appState.expenses.find(e => e.id === item.expenseId);
+            return expense && expense.supplierId === appState.billsFilter.supplierId;
+        });
+    }
+    if (appState.billsFilter.searchTerm) {
+        const term = appState.billsFilter.searchTerm.toLowerCase();
+        filtered = filtered.filter(item => (item.description || '').toLowerCase().includes(term));
+    }
 
-      container.innerHTML = categories
-          .filter(cat => counts[cat.id] > 0)
-          .map(cat => `<button class="sub-nav-item ${appState.billsFilter.category === cat.id?'active' : ''}" data-category="${cat.id}">${cat.label} (${counts[cat.id]})</button>`)
-          .join('');
+    filtered.sort((a, b) => {
+        const valA = (appState.billsFilter.sortBy === 'amount') ? a.amount : _getJSDate(a.dueDate).getTime();
+        const valB = (appState.billsFilter.sortBy === 'amount') ? b.amount : _getJSDate(b.dueDate).getTime();
+        return appState.billsFilter.sortDirection === 'asc' ? valA - valB : valB - valA;
+    });
+    
+    appState.tagihan.currentList = filtered;
 
-      container.querySelectorAll('.sub-nav-item').forEach(btn => {
-          btn.addEventListener('click', () => {
-              appState.billsFilter.category = btn.dataset.category;
-              container.querySelector('.active')?.classList.remove('active');
-              btn.classList.add('active');
-              applyFilterAndSort();
-          });
-      });
+    const contentContainer = $("#sub-page-content");
+    if (!contentContainer) return;
+    
+    contentContainer.innerHTML = `<div class="dense-list-container">${_getBillsListHTML(filtered)}</div>`;
 
-      applyFilterAndSort();
-  };
+    if (!contentContainer.querySelector('.dense-list-item')) {
+        contentContainer.innerHTML = _getEmptyStateHTML({title: 'Tidak Ada Tagihan', desc: 'Tidak ada tagihan yang cocok.'});
+    }
+}
 
-  const renderTabContent = async (tabId) => {
-      appState.activeSubPage.set('tagihan', tabId);
-      appState.billsFilter.category = 'all';
-      const contentContainer = $("#sub-page-content");
-      contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
-      const tabLabel = tabs.find(t => t.id === tabId)?.label || '';
-      setBreadcrumb(['Tagihan', tabLabel]);
+function _initTagihanInteractiveListeners() {
+    _initSelectionMode('#sub-page-content', 'tagihan');
+    _attachSwipeHandlers('#sub-page-content');
+}
 
-      currentCombinedList = [];
-      if (tabId === 'unpaid') {
-          const billsQuery = query(billsCol, where("status", "==", "unpaid"));
-          const billsSnap = await getDocs(billsQuery);
-          const unpaidBills = billsSnap.docs.map(d => ({
-              id: d.id,
-              ...d.data()
-          }));
-          currentCombinedList.push(...unpaidBills);
-          const expensesQuery = query(expensesCol, where("status", "==", "delivery_order"));
-          const expensesSnap = await getDocs(expensesQuery);
-          const deliveryOrders = expensesSnap.docs.map(d => {
-              const data = d.data();
-              return {
-                  id: `expense-${d.id}`,
-                  expenseId: d.id,
-                  description: data.description,
-                  amount: 0,
-                  dueDate: data.date,
-                  status: 'delivery_order',
-                  type: data.type,
-                  projectId: data.projectId,
-                  paidAmount: 0
-              };
-          });
-          currentCombinedList.push(...deliveryOrders);
-      } else {
-          const billsQuery = query(billsCol, where("status", "==", "paid"), orderBy("dueDate", "desc"));
-          const billsSnap = await getDocs(billsQuery);
-          currentCombinedList = billsSnap.docs.map(d => ({
-              id: d.id,
-              ...d.data()
-          }));
-      }
+function _initTagihanPageListeners() {
+    document.body.addEventListener('input', (e) => {
+        if (e.target.id === 'tagihan-search-input') {
+            appState.billsFilter.searchTerm = e.target.value;
+            _renderFilteredAndPaginatedBills();
+        }
+    });
 
-      _renderCategorySubNavAndList();
-      _attachSwipeHandlers('#sub-page-content');
-      };
-  $('#tagihan-search-input').addEventListener('input', (e) => {
-      appState.billsFilter.searchTerm = e.target.value.toLowerCase();
-      applyFilterAndSort();
-  });
-  $('#tagihan-filter-btn').addEventListener('click', () => _showBillsFilterModal(applyFilterAndSort));
-  $('#tagihan-sort-btn').addEventListener('click', () => _showBillsSortModal(applyFilterAndSort));
+    document.body.addEventListener('click', (e) => {
+        const filterSortBtn = e.target.closest('#tagihan-filter-btn, #tagihan-sort-btn');
+        if (filterSortBtn) {
+            // Langsung panggil fungsi modal tanpa mengirim data
+            if (filterSortBtn.id === 'tagihan-filter-btn') {
+                _showBillsFilterModal(_renderFilteredAndPaginatedBills); // ✅ Tidak mengirimkan data lagi
+            } else if (filterSortBtn.id === 'tagihan-sort-btn') {
+                _showBillsSortModal(_renderFilteredAndPaginatedBills);
+            }
+            return;
+        }
 
-  $$('.sub-nav').forEach(nav => {
-      nav.addEventListener('click', e => {
-          const btn = e.target.closest('.sub-nav-item');
-          if (btn && !btn.closest('#category-sub-nav-container')) {
-              $$('.sub-nav-item', nav).forEach(b => b.classList.remove('active'));
-              btn.classList.add('active');
-              renderTabContent(btn.dataset.tab);
-          }
-      });
-  });
+        // Cek #2: Apakah yang diklik adalah tombol tab?
+        const tabBtn = e.target.closest('.sub-nav-item');
+        // Pastikan klik terjadi di dalam container tab dan tombol tab itu sendiri
+        if (tabBtn && e.target.closest('#main-tabs-container, #category-sub-nav-container')) {
+            if (tabBtn.classList.contains('active')) return; // Jangan lakukan apa-apa jika tab sudah aktif
+            
+            const tabContainer = e.target.closest('#main-tabs-container, #category-sub-nav-container');
+            const isMainTab = tabContainer.id === 'main-tabs-container';
+            const allTabs = $$('.sub-nav-item', tabContainer);
+            const currentActive = $('.sub-nav-item.active', tabContainer);
+            const currentIndex = Array.from(allTabs).indexOf(currentActive);
+            const newIndex = Array.from(allTabs).indexOf(tabBtn);
+            const direction = newIndex > currentIndex ? 'forward' : 'backward';
 
-  await renderTabContent(tabs[0].id);
+            if (currentActive) currentActive.classList.remove('active');
+            tabBtn.classList.add('active');
+
+            if (isMainTab) {
+                appState.billsFilter.category = 'all'; 
+                _animateTabSwitch($("#sub-page-content"), _renderTagihanContent, direction);
+            } else {
+                appState.billsFilter.category = tabBtn.dataset.category;
+                _animateTabSwitch($("#sub-page-content"), _renderFilteredAndPaginatedBills, direction);
+            }
+        }
+    });
 }
 
 async function handleOpenBillDetail(billId, expenseId) {
@@ -7168,53 +7407,57 @@ function _createPaymentHistoryHTML(payments) {
     `;
 }
 
-function _showBillsFilterModal(onApply) {
-  const projectOptions = [{
-      value: 'all',
-      text: 'Semua Proyek'
-  }, ...appState.projects.map(p => ({
-      value: p.id,
-      text: p.projectName
-  }))];
-  const supplierOptions = [{
-      value: 'all',
-      text: 'Semua Supplier'
-  }, ...appState.suppliers.map(s => ({
-      value: s.id,
-      text: s.supplierName
-  }))];
+async function _showBillsFilterModal(onApply) {
+    // [PERBAIKAN KUNCI] Ambil data terbaru langsung dari database lokal di sini
+    const activeTab = $('#main-tabs-container .sub-nav-item.active')?.dataset.tab || 'unpaid';
+    const currentBillList = await localDB.bills.where('status').equals(activeTab).toArray();
+    const allExpenses = await localDB.expenses.where('isDeleted').notEqual(1).toArray();
 
-  const content = `
-          <form id="bills-filter-form">
-              ${createMasterDataSelect('filter-project-id', 'Filter Berdasarkan Proyek', projectOptions, appState.billsFilter.projectId)}
-              ${createMasterDataSelect('filter-supplier-id', 'Filter Berdasarkan Supplier', supplierOptions, appState.billsFilter.supplierId)}
-              <div class="filter-modal-footer">
-                  <button type="button" id="reset-filter-btn" class="btn btn-secondary">Reset</button>
-                  <button type="submit" class="btn btn-primary">Terapkan</button>
-              </div>
-          </form>
-      `;
-  createModal('dataDetail', {
-      title: 'Filter Tagihan',
-      content
-  });
+    const relevantSupplierIds = new Set();
+    currentBillList.forEach(bill => {
+        // Cari di daftar 'allExpenses' yang baru saja kita ambil
+        const expense = allExpenses.find(e => e.id === bill.expenseId);
+        if (expense && expense.supplierId) {
+            relevantSupplierIds.add(expense.supplierId);
+        }
+    });
 
-  _initCustomSelects($('#dataDetail-modal'));
+    const projectOptions = [{ value: 'all', text: 'Semua Proyek' }, ...appState.projects.map(p => ({ value: p.id, text: p.projectName }))];
+    
+    // Gunakan data supplier dari state, tapi filter berdasarkan ID yang relevan
+    const supplierOptions = [{ value: 'all', text: 'Semua Supplier' }, 
+        ...appState.suppliers
+            .filter(s => relevantSupplierIds.has(s.id))
+            .map(s => ({ value: s.id, text: s.supplierName }))
+    ];
 
-  $('#bills-filter-form').addEventListener('submit', (e) => {
-      e.preventDefault();
-      appState.billsFilter.projectId = $('#filter-project-id').value;
-      appState.billsFilter.supplierId = $('#filter-supplier-id').value;
-      onApply();
-      closeModal($('#dataDetail-modal'));
-  });
+    const content = `
+        <form id="bills-filter-form">
+            ${createMasterDataSelect('filter-project-id', 'Filter Berdasarkan Proyek', projectOptions, appState.billsFilter.projectId)}
+            ${createMasterDataSelect('filter-supplier-id', 'Filter Berdasarkan Supplier', supplierOptions, appState.billsFilter.supplierId)}
+            <div class="filter-modal-footer">
+                <button type="button" id="reset-filter-btn" class="btn btn-secondary">Reset</button>
+                <button type="submit" class="btn btn-primary">Terapkan</button>
+            </div>
+        </form>
+    `;
+    createModal('dataDetail', { title: 'Filter Tagihan', content });
+    _initCustomSelects($('#dataDetail-modal'));
 
-  $('#reset-filter-btn').addEventListener('click', () => {
-      appState.billsFilter.projectId = 'all';
-      appState.billsFilter.supplierId = 'all';
-      onApply();
-      closeModal($('#dataDetail-modal'));
-  });
+    $('#bills-filter-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        appState.billsFilter.projectId = $('#filter-project-id').value;
+        appState.billsFilter.supplierId = $('#filter-supplier-id').value;
+        onApply();
+        closeModal($('#dataDetail-modal'));
+    });
+
+    $('#reset-filter-btn').addEventListener('click', () => {
+        appState.billsFilter.projectId = 'all';
+        appState.billsFilter.supplierId = 'all';
+        onApply();
+        closeModal($('#dataDetail-modal'));
+    });
 }
 
 function _showBillsSortModal(onApply) {
@@ -7270,99 +7513,84 @@ function _showBillsSortModal(onApply) {
 }
 
 function _getBillsListHTML(items) {
-  if (!items || items.length === 0) {
-      let message = 'Tidak ada data';
-      if (appState.billsFilter.searchTerm || appState.billsFilter.projectId !== 'all' || appState.billsFilter.supplierId !== 'all' || appState.billsFilter.category !== 'all') {
-          message += ' yang cocok dengan kriteria filter Anda.';
-      } else {
-          message += ' dalam kategori ini.';
-      }
-      return `<p class="empty-state" style="margin-top: 2rem;">${message}</p>`;
-  }
+    if (!items || items.length === 0) {
+        return '';
+    }
 
-  return `
-  <div class="dense-list-container">
-      ${(() => { const isTouch = (('ontouchstart' in window) || (navigator.maxTouchPoints||0)>0); return items.map(item => {
-          if (!item) return '';
+    return items.map(item => {
+        if (!item) return '';
 
-          // --- PERUBAHAN DIMULAI DI SINI ---
-          let title = item.description;
-          let subtitle;
+        let title = item.description;
+        let subtitle;
+        const isTouch = (('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0);
 
-          if (item.type === 'gaji') {
-              const date = item.dueDate ? _getJSDate(item.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long' }) : 'N/A';
-              if (item.workerDetails && item.workerDetails.length > 1) {
-                  subtitle = `Upah untuk ${item.workerDetails.length} pekerja`;
-              } else if (item.workerDetails && item.workerDetails.length === 1) {
-                   subtitle = `Upah a.n. ${item.workerDetails[0].name}`;
-              } else {
-                  subtitle = "Tagihan Gaji Karyawan";
-              }
-              subtitle += ` - ${date}`;
-          } else {
-              let supplierName = '';
-              const expense = appState.expenses.find(e => e.id === item.expenseId);
-              if (expense && expense.supplierId) {
-                  supplierName = appState.suppliers.find(s => s.id === expense.supplierId)?.supplierName || '';
-              }
-              const date = item.dueDate ? _getJSDate(item.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : 'N/A';
-              subtitle = supplierName ? `${supplierName} - Jatuh Tempo: ${date}` : `Jatuh Tempo: ${date}`;
-          }
+        if (item.type === 'gaji') {
+            const date = item.dueDate ? _getJSDate(item.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'long' }) : 'N/A';
+            if (item.workerDetails && item.workerDetails.length > 1) {
+                subtitle = `Upah untuk ${item.workerDetails.length} pekerja`;
+            } else if (item.workerDetails && item.workerDetails.length === 1) {
+                 subtitle = `Upah a.n. ${item.workerDetails[0].name}`;
+            } else {
+                subtitle = "Tagihan Gaji Karyawan";
+            }
+            subtitle += ` - ${date}`;
+        } else {
+            let supplierName = '';
+            const expense = appState.expenses.find(e => e.id === item.expenseId);
+            if (expense && expense.supplierId) {
+                supplierName = appState.suppliers.find(s => s.id === expense.supplierId)?.supplierName || '';
+            }
+            const date = item.dueDate ? _getJSDate(item.dueDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : 'N/A';
+            subtitle = supplierName ? `${supplierName} - Jatuh Tempo: ${date}` : `Jatuh Tempo: ${date}`;
+        }
 
-          const remainingAmount = (item.amount || 0) - (item.paidAmount || 0);
-          const isFullyPaid = remainingAmount <= 0 && item.status !== 'delivery_order';
+        const remainingAmount = (item.amount || 0) - (item.paidAmount || 0);
+        const isFullyPaid = remainingAmount <= 0 && item.status !== 'delivery_order';
 
-          let statusHTML = '';
-          let mainActionHTML = '';
-          if (item.status === 'delivery_order') {
-              statusHTML = `<span class="status-badge info">Surat Jalan</span>`;
-          } else if (isFullyPaid) {
-              statusHTML = `<span class="status-badge positive">Lunas</span>`;
-          } else if (item.paidAmount > 0) {
+        let statusHTML = '';
+        if (item.status === 'delivery_order') {
+            statusHTML = `<span class="status-badge info">Surat Jalan</span>`;
+        } else if (isFullyPaid) {
+            statusHTML = `<span class="status-badge positive">Lunas</span>`;
+        } else if (item.paidAmount > 0) {
             statusHTML = `<span class="status-badge warn">Sisa ${fmtIDR(remainingAmount)}</span>`;
-            // Pindah tombol Bayar ke menu titik tiga (hilangkan dari kartu)
-            mainActionHTML = ``;
-          } else {
+        } else {
             statusHTML = `<span class="status-badge negative">Belum Dibayar</span>`;
-            // Pindah tombol Bayar ke menu titik tiga (hilangkan dari kartu)
-            mainActionHTML = ``;
-          }
-          // Hapus dipindahkan ke menu titik tiga agar konsisten dengan halaman pemasukan.
-          const canPay = !isViewer() && item.status !== 'delivery_order' && !isFullyPaid;
-          const canDelete = !isViewer();
-          const deleteId = item.expenseId || item.id;
-          const deleteType = item.expenseId?'expense' : 'bill';
-          // Build swipe quick actions for touch devices
-          let swipeBtns = '';
-          if (item.status === 'delivery_order') {
-              // Edit item DO (detail barang)
-              swipeBtns += `<button class="btn-icon" data-action="edit-do-items" data-expense-id="${item.expenseId || ''}" title="Edit DO"><span class="material-symbols-outlined">edit</span></button>`;
-          } else {
-              // Edit bill (umum/gaji)
-              if (item.id) swipeBtns += `<button class="btn-icon" data-action="edit-item" data-id="${item.id}" data-type="bill" title="Edit"><span class="material-symbols-outlined">edit</span></button>`;
-              // Pay if allowed
-              if (canPay) swipeBtns += `<button class="btn-icon btn-icon-success" data-action="pay-bill" title="Bayar"><span class="material-symbols-outlined">payment</span></button>`;
-          }
-          // Delete (expense atau bill)
-          if (canDelete) swipeBtns += `<button class="btn-icon btn-icon-danger" data-action="delete-item" data-id="${deleteId}" data-type="${deleteType}" title="Hapus"><span class="material-symbols-outlined">delete</span></button>`;
+        }
 
-          return `
-          <div class="dense-list-item" data-id="${item.id || item.localId}" data-local-id="${item.localId}" data-type="bill" data-expense-id="${item.expenseId || ''}" style="position:relative; overflow:hidden;">
-              <div class="swipe-actions">
-                  ${swipeBtns}
-              </div>
-              <div class="item-main-content" data-action="open-bill-detail">
-                  <strong class="item-title">${item.description}</strong>
-                  <span class="item-subtitle">${subtitle}</span>
-                  <div class="item-details">
-                      <strong class="item-amount">${item.status === 'delivery_order'?'Tanpa Harga' : fmtIDR(item.amount)}</strong>
-                      ${statusHTML}
-                  </div>
-              </div>
-              ${isTouch?'' : `<div class="item-actions">${mainActionHTML}<button class="btn-icon" data-action="open-bill-actions-modal" data-id="${item.id}" data-local-id="${item.localId}" data-expense-id="${item.expenseId || ''}" title="Opsi Lainnya"><span class="material-symbols-outlined">more_vert</span></button></div>`}
-          </div>`;
-      }).join('') })()}
-  </div>`;
+        // ================================================================
+        // [PERBAIKAN KUNCI #1] - Membuat HTML untuk tombol aksi swipe
+        // ================================================================
+        let swipeActionsHTML = '';
+        if (!isViewer()) {
+            if (!isFullyPaid && item.status !== 'delivery_order') {
+                swipeActionsHTML += `<button class="btn-icon btn-icon-success" data-action="pay-bill" title="Bayar"><span class="material-symbols-outlined">payment</span></button>`;
+            }
+            if (item.status === 'delivery_order') {
+                 swipeActionsHTML += `<button class="btn-icon" data-action="edit-surat-jalan" data-id="${item.expenseId}" title="Input Harga"><span class="material-symbols-outlined">edit_note</span></button>`;
+            } else {
+                 swipeActionsHTML += `<button class="btn-icon" data-action="edit-item" data-id="${item.id}" data-type="bill" title="Edit"><span class="material-symbols-outlined">edit</span></button>`;
+            }
+            swipeActionsHTML += `<button class="btn-icon btn-icon-danger" data-action="delete-item" data-id="${item.id}" data-type="bill" title="Hapus"><span class="material-symbols-outlined">delete</span></button>`;
+        }
+        // ================================================================
+        
+return `
+        <div class="dense-list-item" data-id="${item.id || item.localId}" data-expense-id="${item.expenseId || ''}">
+            <div class="selection-checkmark"><span class="material-symbols-outlined">check_circle</span></div>
+
+            <div class="swipe-actions">${swipeActionsHTML}</div>
+            <div class="item-main-content" data-action="open-bill-detail">                <strong class="item-title">${title}</strong>
+                <span class="item-subtitle">${subtitle}</span>
+                <div class="item-details">
+                    <strong class="item-amount">${item.status === 'delivery_order'?'Tanpa Harga' : fmtIDR(item.amount)}</strong>
+                    ${statusHTML}
+                </div>
+            </div>
+
+            ${!isTouch && !isViewer() ? `<div class="item-actions"><button class="btn-icon" data-action="open-bill-actions-modal"><span class="material-symbols-outlined">more_vert</span></button></div>` : ''}
+        </div>`;
+    }).join('');
 }
 
 function _getEditFormFakturMaterialHTML(item) {
@@ -8123,6 +8351,7 @@ async function renderSimulasiBayarPage() {
   $('#simulasi-dana-masuk').addEventListener('input', _updateSimulasiTotals);
   $('#simulasi-dana-masuk').addEventListener('input', _formatNumberInput);
   $('#simulasi-buat-pdf').addEventListener('click', _createSimulasiPDF);
+    _setActiveListeners([]);
 }
 
 function _openSimulasiItemActionsModal(dataset) {
@@ -8353,6 +8582,7 @@ async function renderLaporanPage() {
         appState.reportFilter = { start: s, end: e };
         renderLaporanPage();
     });
+    _setActiveListeners([]);
 }
 
   async function _renderFinancialSummaryChart() {
@@ -11365,23 +11595,22 @@ function renderSidebar() {
 }
 
 function renderPageContent() {
-    const {
-        activePage,
-        userRole,
-        userStatus
-    } = appState;
+    const { activePage, userStatus } = appState;
     if (userStatus !== 'active') return;
 
-    const pageTitleEl = $('#page-label-name');
     const pageLink = ALL_NAV_LINKS.find(link => link.id === activePage);
-    if (pageTitleEl && pageLink) {
-        pageTitleEl.textContent = pageLink.label;
-    }
+    $('#page-label-name').textContent = pageLink ? pageLink.label : '';
 
     const container = $('.page-container');
     container.innerHTML = _getSkeletonLoaderHTML(activePage);
 
-    // Pemetaan ID halaman ke fungsi render
+    // [PERBAIKAN KUNCI] Logika baru untuk Halaman Tagihan
+    if (activePage === 'tagihan') {
+        renderTagihanPageLayout();   // 1. Bangun kerangka
+        return _renderTagihanContent(); // 2. Isi kontennya
+    }
+
+    // Logika untuk halaman lain tetap sama
     const pageRenderers = {
         'dashboard': renderDashboardPage,
         'pemasukan': renderPemasukanPage,
@@ -11389,7 +11618,6 @@ function renderPageContent() {
         'absensi': renderAbsensiPage,
         'jurnal': renderJurnalPage,
         'stok': renderStokPage,
-        'tagihan': renderTagihanPage,
         'laporan': renderLaporanPage,
         'simulasi': renderSimulasiBayarPage,
         'pengaturan': renderPengaturanPage,
@@ -11398,7 +11626,6 @@ function renderPageContent() {
 
     const renderFunc = pageRenderers[activePage];
     if (typeof renderFunc === 'function') {
-        // Return the possibly-async renderer so callers can await final content
         return renderFunc();
     } else {
         container.innerHTML = `<p class="empty-state">Halaman tidak ditemukan.</p>`;
@@ -11670,32 +11897,46 @@ function initHistoryNavigation() {
 }
 
 function attachEventListeners() {
-    const mainContent = $('main');
-    const modalContainer = $('#modal-container');
+    _initTagihanPageListeners(); // Panggil listener tagihan sekali saja
 
-    // Event listener utama untuk semua klik di body
     document.body.addEventListener('click', (e) => {
         const target = e.target.closest('[data-action]');
+        
+        if (appState.selectionMode.active) {
+            const card = e.target.closest('.dense-list-item');
+            const closeBtn = e.target.closest('#close-selection-btn');
+            
+            if (card && !e.target.closest('.swipe-actions')) {
+                _toggleCardSelection(card);
+            } else if (closeBtn) {
+                appState.selectionMode.active = false;
+                appState.selectionMode.selectedIds.clear();
+                _renderSelectionBar();
+                $$('.dense-list-item.selected').forEach(c => c.classList.remove('selected'));
+            }
+            return;
+        }
+
         if (!target) return;
-
-        const {
-            action,
-            id,
-            type,
-            nav,
-            expenseId,
-            date,
-            workerId
-        } = target.dataset;
-
-    const actions = {
+        const { action, id, type, nav, expenseId, date, workerId } = target.dataset;
+        const actions = {
             'navigate': () => {
                 const isQuick = !!target.closest('.dashboard-action-item, .dashboard-balance-card');
                 handleNavigation(nav, { source: isQuick ? 'quick' : undefined });
             },
-            'auth-action': () => appState.currentUser?createModal('confirmLogout') : signInWithGoogle(),
+            'open-bill-detail': () => {
+                const itemEl = target.closest('[data-id]');
+                const billId = itemEl ? itemEl.dataset.id : null;
+                const expenseIdEl = target.closest('[data-expense-id]');
+                const expenseId = expenseIdEl ? expenseIdEl.dataset.expenseId : null;
+                if (billId) {
+                    handleOpenBillDetail(billId, expenseId);
+                }
+            },
+
+            'auth-action': () => appState.currentUser ? createModal('confirmLogout') : signInWithGoogle(),
             'toggle-theme': () => toggleTheme(),
-            'manage-master': () => handleManageMasterData(type),
+            'manage-master': () => handleManageMasterData(type),            
             'manage-master-global': () => {
                 const globalTypes = ['suppliers', 'workers', 'professions', 'materials', 'op-cats', 'other-cats', 'creditors'];
                 const content = globalTypes.map(t => {

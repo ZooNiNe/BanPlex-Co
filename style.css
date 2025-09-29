@@ -998,13 +998,6 @@ body.selection-active .selection-bar.show {
   color: white;
 }
 
-/* Style untuk kartu yang sedang dipilih */
-.card-list-item.selected {
-  background-color: color-mix(in srgb, var(--primary) 10%, transparent);
-  border: 1px solid var(--primary);
-  transform: scale(1.02);
-}
-
 /* Style untuk Kartu Ringkasan */
 .summary-card {
   margin-bottom: 1.5rem;
@@ -1778,9 +1771,24 @@ background: color-mix(in srgb, var(--primary) 10%, transparent);
   border-bottom: 1px solid var(--line);
   background-color: var(--panel);
   border-radius: var(--radius-sm);
-  margin-bottom: 0.5rem;
   box-shadow: var(--shadow-sm);
 }
+
+@keyframes card-enter-animation {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card-is-entering {
+  animation: card-enter-animation 0.4s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
 .item-main-content {
   flex-grow: 1;
   display: flex;
@@ -3650,4 +3658,176 @@ body.pending-mode .sidebar {
 .sub-page-exit-to-right {
   opacity: 0;
   transform: translateX(15px); /* Keluar ke kanan */
+}
+
+/* =======================================================
+ * [REVISI FINAL] Tata Letak Modal yang Konsisten
+ * ======================================================= */
+
+/* 1. Aturan Dasar untuk SEMUA Modal */
+.modal-content {
+  /* KUNCI: Tinggi modal mengikuti kontennya, tidak dipaksa tinggi */
+  height: auto;
+  
+  /* Batas tinggi maksimal agar tidak melebihi layar */
+  max-height: calc(95vh - (65px + env(safe-area-inset-bottom, 0px)));
+  
+  /* Sudut melengkung HANYA di bagian atas, khas bottom-sheet */
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+/* 2. Mendorong modal agar muncul di atas bottom nav */
+.modal-bg {
+  padding-bottom: calc(65px + env(safe-area-inset-bottom, 0px));
+}
+
+/* 3. Membuat area tombol (footer) selalu terlihat (Sticky) */
+.modal-footer {
+  position: sticky;
+  bottom: 0;
+  background-color: var(--panel);
+  border-top: 1px solid var(--line);
+  z-index: 10;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+}
+
+/* 4. Beri ruang di body agar konten tidak tertutup footer saat scroll */
+.modal-body {
+  padding-bottom: 6rem;
+}
+
+/* 5. Penyesuaian untuk dark theme agar konsisten */
+.dark-theme .modal-footer {
+  background-color: #1e293b;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.2);
+}
+
+/* =======================================================
+ * [BARU] Desain Mode Seleksi & Perbaikan Tampilan Kartu
+ * ======================================================= */
+
+/* Bar yang muncul di bawah saat item dipilih */
+.selection-bar {
+  position: fixed;
+  bottom: -100px;
+  left: 0;
+  right: 0;
+  z-index: 1001;
+  background-color: var(--primary);
+  color: white;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.2);
+  transition: bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  height: calc(65px + env(safe-area-inset-bottom, 0px));
+  padding: 0 1rem env(safe-area-inset-bottom, 0px) 1rem;
+}
+
+.selection-bar.show {
+  /* Gunakan variabel CSS dan `calc()` untuk posisi yang akurat di atas bottom nav */
+  bottom: calc(65px + env(safe-area-inset-bottom, 0px));
+}
+
+.selection-info {
+  flex-grow: 1;
+  text-align: center;
+}
+
+#selection-count {
+  font-size: 0.8rem;
+  opacity: 0.9;
+  display: block;
+}
+
+#selection-total {
+  font-size: 1.1rem;
+  font-weight: 700;
+  display: block;
+}
+
+#close-selection-btn {
+  color: white;
+}
+.dense-list-item {
+  position: relative; 
+}
+
+/* =======================================================
+    [SOLUSI FINAL] STYLE UNTUK MODE SELEKSI DENGAN Z-INDEX
+   ======================================================= */
+
+/* Lapisan Konten Utama (Nama, Jumlah, dll.) */
+.dense-list-item .item-main-content {
+  position: relative; /* Wajib ada untuk z-index */
+  z-index: 2; /* Ditempatkan di lapisan ke-2 */
+  background-color: var(--panel); /* Pastikan punya background solid */
+}
+
+/* Lapisan Tombol Swipe (Edit, Hapus, dll.) */
+.dense-list-item .swipe-actions {
+  z-index: 1; /* Ditempatkan di lapisan ke-1 (DI BELAKANG KONTEN) */
+}
+
+/* Lapisan Checkmark Baru */
+.selection-checkmark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: scale(0);
+  opacity: 0;
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s;
+  z-index: 3; /* Ditempatkan di lapisan ke-3 (PALING ATAS) */
+}
+
+.selection-checkmark .material-symbols-outlined {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+/* --- Style Saat Item DIPILIH --- */
+
+.dense-list-item.selected {
+  background-color: var(--primary, #0052ff);
+  border-color: var(--primary-dark, #0045d1);
+  color: white;
+  box-shadow: 0 4px 15px rgba(0, 82, 255, 0.3);
+}
+
+/* KUNCI PERBAIKAN: Paksa lapisan swipe ke belakang saat seleksi aktif */
+.dense-list-item.selected .swipe-actions {
+  z-index: -1; /* Ini akan menyembunyikannya DI BELAKANG background biru */
+  opacity: 0;
+}
+
+/* Saat dipilih, konten utama menjadi transparan agar background biru terlihat */
+.dense-list-item.selected .item-main-content {
+  background-color: transparent;
+}
+
+/* Tampilkan checkmark saat item dipilih */
+.dense-list-item.selected .selection-checkmark {
+  transform: scale(1);
+  opacity: 1;
+  background-color: white;
+  color: var(--primary, #0052ff);
+}
+
+/* Pastikan semua teks menjadi putih saat dipilih */
+.dense-list-item.selected .item-title,
+.dense-list-item.selected .item-subtitle,
+.dense-list-item.selected .item-amount,
+.dense-list-item.selected .status-badge {
+  color: white;
+}
+
+/* Style khusus untuk status badge saat terpilih */
+.dense-list-item.selected .status-badge {
+  background-color: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.5);
 }
