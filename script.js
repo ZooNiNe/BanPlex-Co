@@ -2846,28 +2846,45 @@ try {
 
 function upsertCommentInUI(a, b, c) {
     try {
-        // Flexible signature: (sectionEl, commentData, changeType) OR (commentData, changeType)
         let sectionEl, commentData, changeType;
         if (a && a.nodeType === 1) { sectionEl = a; commentData = b; changeType = c; }
         else { commentData = a; changeType = b; sectionEl = document.querySelector(`.comments-section[data-parent-id="${commentData.parentId}"][data-parent-type="${commentData.parentType}"]`); }
+        
         if (!sectionEl) return;
         const list = sectionEl.querySelector('.comments-list');
         if (!list) return;
+
         const existing = list.querySelector(`.comment-item[data-id="${commentData.id}"]`);
-        const me = appState.currentUser && appState.currentUser.uid === commentData.userId;
-        const when = _getJSDate(commentData.createdAt).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-        const canDelete = !!appState.currentUser && (appState.currentUser.uid === commentData.userId || appState.userRole === 'Owner');
-        const safeText = String(commentData.content || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+        
         if (changeType === 'removed' || commentData.isDeleted) {
             if (existing) { existing.style.opacity = '0'; setTimeout(() => existing.remove(), 250); }
             return;
         }
-        const htmlInner = `<div class="comment-meta"><strong>${commentData.userName || 'Pengguna'}</strong><span class="comment-date">${when}</span>${canDelete?`<button class=\"btn-icon btn-icon-danger\" data-action=\"delete-comment\" data-id=\"${commentData.id}\" title=\"Hapus\"><span class=\"material-symbols-outlined\">delete</span></button>`:''}</div><div class="comment-text">${safeText}</div>`;
+
+        const isCurrentUser = appState.currentUser && appState.currentUser.uid === commentData.userId;
+        const when = _getJSDate(commentData.createdAt).toLocaleString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        const canDelete = !!appState.currentUser && (isCurrentUser || appState.userRole === 'Owner');
+        const safeText = String(commentData.content || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+        const initials = (commentData.userName || 'U').split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
+
+        const htmlInner = `
+            <div class="comment-avatar">${initials}</div>
+            <div class="comment-bubble">
+                <div class="comment-meta">
+                    <strong class="comment-user">${commentData.userName || 'Pengguna'}</strong>
+                    ${canDelete ? `<button class="btn-icon btn-icon-danger" data-action="delete-comment" data-id="${commentData.id}" title="Hapus"><span class="material-symbols-outlined">delete</span></button>` : ''}
+                </div>
+                <div class="comment-text">${safeText}</div>
+                <div class="comment-date">${when}</div>
+            </div>
+        `;
+
         if (existing) {
             existing.innerHTML = htmlInner;
+            existing.className = `comment-item ${isCurrentUser ? 'is-current-user' : ''}`;
         } else {
             const wrapper = document.createElement('div');
-            wrapper.className = `comment-item ${me?'is-current-user':''}`;
+            wrapper.className = `comment-item ${isCurrentUser ? 'is-current-user' : ''}`;
             wrapper.dataset.id = commentData.id;
             wrapper.style.opacity = '0';
             wrapper.innerHTML = htmlInner;
@@ -2876,7 +2893,8 @@ function upsertCommentInUI(a, b, c) {
         }
     } catch (e) { console.warn('upsertCommentInUI error', e); }
 }
-  $$('.sub-nav-item').forEach(btn => btn.addEventListener('click', (e) => {
+
+$$('.sub-nav-item').forEach(btn => btn.addEventListener('click', (e) => {
       $$('.sub-nav-item').forEach(b => b.classList.remove('active'));
       e.currentTarget.classList.add('active');
       renderTabContent(e.currentTarget.dataset.tab);
@@ -2895,6 +2913,7 @@ async function _rerenderPemasukanList(type) {
   await fetchAndCacheData(key, col);
 
   listContainer.innerHTML = _getListPemasukanHTML(type);
+  _attachSwipeHandlers('#pemasukan-list-container'); 
 }
 const createMasterDataSelect = (id, label, options, selectedValue = '', masterType = null) => {
   const selectedOption = options.find(opt => opt.value === selectedValue);
@@ -2995,60 +3014,138 @@ function _getFormPemasukanHTML(type) {
 }
 
 function _getListPemasukanHTML(type) {
-  const list = type === 'termin'?appState.incomes : appState.fundingSources;
-  if (!list || list.length === 0) {
-      // [IMPROVE-UI/UX]: richer empty state for pemasukan
-      return _getEmptyStateHTML({
-          icon: 'account_balance_wallet',
-          title: 'Belum Ada Pemasukan',
-          desc: 'Catat pemasukan atau pinjaman untuk mulai melacak arus kas.',
-          action: 'navigate',
-          actionLabel: 'Tambah Pemasukan'
-      });
-  }
-  return `
-      <div style="margin-top: 1.5rem;">
-          ${list.map(item => {
-              const title = type === 'termin' ?
-                  appState.projects.find(p => p.id === item.projectId)?.projectName || 'Termin Proyek' :
-                  appState.fundingCreditors.find(c => c.id === item.creditorId)?.creditorName || 'Pinjaman';
-              const amount = item.totalAmount || item.amount || 0;
-              const paidAmount = item.paidAmount || 0;
-              const totalRepayment = item.totalRepaymentAmount || amount;
-              const remainingAmount = totalRepayment - paidAmount;
-              const date = item.date?_getJSDate(item.date).toLocaleDateString('id-ID', {
-                  day: 'numeric',
-                  month: 'long',
-                  year: 'numeric'
-              }) : 'Tanggal tidak valid';
+    const list = type === 'termin' ? appState.incomes : appState.fundingSources;
+    if (!list || list.length === 0) {
+        return _getEmptyStateHTML({
+            icon: 'account_balance_wallet',
+            title: 'Belum Ada Pemasukan',
+            desc: 'Catat pemasukan atau pinjaman untuk mulai melacak arus kas.',
+        });
+    }
 
-              const isPaid = item.status === 'paid' || remainingAmount <= 0;
-              let secondaryInfoHTML = '';
-              if (type === 'pinjaman') {
-                  if (isPaid) {
-                      secondaryInfoHTML = `<div class="paid-indicator"><span class="material-symbols-outlined">task_alt</span> Lunas</div>`;
-                  } else {
-                      secondaryInfoHTML = `<p class="card-list-item-repayment-info">Sisa: <strong>${fmtIDR(remainingAmount)}</strong></p>`;
-                  }
-              }
-              return `
-              <div class="card card-list-item" data-id="${item.id}" data-type="${type}">
-                  <div class="card-list-item-content" data-action="open-detail">
-                      <div class="card-list-item-details">
-                          <h5 class="card-list-item-title">${title}</h5>
-                          <p class="card-list-item-subtitle">${date}</p>
-                      </div>
-                      <div class="card-list-item-amount-wrapper">
-                          <strong class="card-list-item-amount">${fmtIDR(amount)}</strong>
-                          ${secondaryInfoHTML}
-                      </div>
-                  </div>
-                  ${isViewer()?'' : `<button class="btn-icon card-list-item-actions-trigger" data-action="open-actions">
-                      <span class="material-symbols-outlined">more_vert</span>
-                  </button>`}
-              </div>`;
-          }).join('')}
-      </div>`;
+    return `<div id="pemasukan-list-container" class="dense-list-container" style="margin-top: 1rem;">
+        ${list.map(item => {
+            const isTermin = type === 'termin';
+            const title = isTermin
+                ? (appState.projects.find(p => p.id === item.projectId)?.projectName || 'Termin Proyek')
+                : (appState.fundingCreditors.find(c => c.id === item.creditorId)?.creditorName || 'Pinjaman');
+            
+            const amount = item.totalAmount || item.amount || 0;
+            const date = item.date ? _getJSDate(item.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long' }) : 'Tanggal tidak valid';
+            const isPaid = item.status === 'paid';
+
+            let swipeActions = '';
+            if (!isPaid && !isTermin) {
+                swipeActions += `<button class="btn-icon btn-icon-success" data-action="pay-loan" data-id="${item.id}" data-type="pinjaman" title="Bayar"><span class="material-symbols-outlined">payment</span></button>`;
+            }
+            swipeActions += `<button class="btn-icon" data-action="edit-item" data-id="${item.id}" data-type="${type}" title="Edit"><span class="material-symbols-outlined">edit</span></button>`;
+            swipeActions += `<button class="btn-icon btn-icon-danger" data-action="delete-item" data-id="${item.id}" data-type="${type}" title="Hapus"><span class="material-symbols-outlined">delete</span></button>`;
+
+            let statusInfo = '';
+            if (!isTermin) {
+                const paidAmount = item.paidAmount || 0;
+                const remainingAmount = (item.totalRepaymentAmount || amount) - paidAmount;
+                statusInfo = isPaid
+                    ? `<span class="status-badge positive">Lunas</span>`
+                    : `<span class="status-badge warn">Sisa: ${fmtIDR(remainingAmount)}</span>`;
+            }
+
+            return `
+            <div class="dense-list-item card" data-id="${item.id}">
+                <div class="swipe-actions">${swipeActions}</div>
+                <div class="item-main-content" data-action="open-detail" data-id="${item.id}" data-type="${type}">
+                    <strong class="item-title">${title}</strong>
+                    <span class="item-subtitle">${date}</span>
+                    <div class="item-details">
+                        <strong class="item-amount">${fmtIDR(amount)}</strong>
+                        ${statusInfo}
+                    </div>
+                </div>
+            </div>`;
+        }).join('')}
+    </div>`;
+}
+
+function _attachSwipeHandlers(containerSelector) {
+    let openCard = null;
+    const container = document.querySelector(containerSelector);
+    if (!container) return;
+
+    const closeOpenCard = () => {
+        if (openCard) {
+            openCard.classList.remove('swipe-open');
+            const content = openCard.querySelector('.item-main-content');
+            if (content) content.style.transform = 'translateX(0)';
+            openCard = null;
+        }
+    };
+
+    container.addEventListener('touchstart', e => {
+        const item = e.target.closest('.dense-list-item');
+        if (!item || !item.querySelector('.swipe-actions')) return;
+        if (item !== openCard) {
+            closeOpenCard();
+        }
+        item.dataset.startX = e.touches[0].clientX;
+    }, { passive: true });
+
+    container.addEventListener('touchmove', e => {
+        const item = e.target.closest('.dense-list-item');
+        if (!item || !item.dataset.startX) return;
+        const startX = parseFloat(item.dataset.startX);
+        const dx = e.touches[0].clientX - startX;
+        if (dx < 0) {
+            const content = item.querySelector('.item-main-content');
+            if (content) {
+                content.style.transition = 'none';
+                content.style.transform = `translateX(${dx}px)`;
+            }
+        }
+    }, { passive: true });
+
+    container.addEventListener('touchend', e => {
+        const item = e.target.closest('.dense-list-item');
+        
+        // [PERBAIKAN KUNCI] Cek apakah sentuhan berakhir di atas tombol aksi.
+        // Jika ya, ini adalah sebuah 'tap' pada tombol, bukan gestur swipe.
+        // Hentikan eksekusi di sini agar event 'click' bisa berjalan normal.
+        if (e.target.closest('.swipe-actions button, .swipe-actions a')) {
+            // Jangan hapus 'delete item.dataset.startX' agar tidak ada swipe palsu
+            if (item) delete item.dataset.startX;
+            return; 
+        }
+
+        if (!item || !item.dataset.startX) return;
+        const content = item.querySelector('.item-main-content');
+        if (!content) return;
+        
+        content.style.transform = '';
+        content.style.transition = '';
+
+        const actions = item.querySelector('.swipe-actions');
+        const actionsWidth = actions ? actions.getBoundingClientRect().width : 120;
+        
+        const startX = parseFloat(item.dataset.startX);
+        const dx = e.changedTouches[0].clientX - startX;
+
+        if (dx < -(actionsWidth / 2)) {
+            item.classList.add('swipe-open');
+            openCard = item;
+        } else {
+            item.classList.remove('swipe-open');
+            if (openCard === item) openCard = null;
+        }
+        delete item.dataset.startX;
+    });
+
+    if (!window.globalSwipeCloseListener) {
+        document.body.addEventListener('click', (e) => {
+            if (openCard && !e.target.closest('.dense-list-item.swipe-open')) {
+                closeOpenCard();
+            }
+        }, true);
+        window.globalSwipeCloseListener = true;
+    }
 }
 
 function _createDetailContentHTML(item, type) {
@@ -6017,57 +6114,7 @@ async function _renderRiwayatRekapView(container) {
     container.innerHTML = `<div class="dense-list-container">${listHTML}</div>`;
     
     // Panggil fungsi inisialisasi gestur geser setelah HTML dirender
-    setTimeout(() => _attachRecapSwipeHandlers(), 50);
-}
-
-// GANTI FUNGSI LAMA ANDA DENGAN VERSI BARU INI
-function _attachRecapSwipeHandlers() {
-    if (appState.activePage !== 'jurnal') return;
-    
-    const isTouch = (('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0);
-    if (!isTouch) return;
-
-    let openCard = null;
-    const closeOpenCard = () => {
-        if (openCard) {
-            openCard.classList.remove('swipe-open');
-            openCard = null;
-        }
-    };
-
-    const items = $$('#rekap-gaji-content .dense-list-item');
-    items.forEach(item => {
-        let startX = 0;
-        
-        item.addEventListener('touchstart', e => {
-            if (item !== openCard) {
-                closeOpenCard();
-            }
-            startX = e.touches[0].clientX;
-        }, { passive: true });
-
-        item.addEventListener('touchmove', e => {
-            const dx = e.touches[0].clientX - startX;
-            if (dx < -30) {
-                item.classList.add('swipe-open');
-                openCard = item;
-            }
-            if (dx > 30) {
-                item.classList.remove('swipe-open');
-                if (openCard === item) openCard = null;
-            }
-        }, { passive: true });
-    });
-
-    // [OPTIMASI] Pastikan listener ini hanya ditambahkan sekali
-    if (!window.globalSwipeCloseListenerAttached) {
-        document.addEventListener('click', (e) => {
-            if (openCard && !e.target.closest('.dense-list-item.swipe-open')) {
-                closeOpenCard();
-            }
-        });
-        window.globalSwipeCloseListenerAttached = true;
-    }
+    setTimeout(() => _attachSwipeHandlers('#rekap-gaji-content'), 50);
 }
 
 async function handleRemoveWorkerFromRecap(billId, workerId) {
@@ -6443,7 +6490,7 @@ async function renderTagihanPage() {
       }
       setBreadcrumb(parts);
       $("#sub-page-content").innerHTML = _getBillsListHTML(filtered);
-      _attachBillSwipeHandlers(); 
+      _attachSwipeHandlers('#sub-page-content');
     };
 
   const _renderCategorySubNavAndList = () => {
@@ -6534,8 +6581,8 @@ async function renderTagihanPage() {
       }
 
       _renderCategorySubNavAndList();
-      _attachBillSwipeHandlers();
-  };
+      _attachSwipeHandlers('#sub-page-content');
+      };
   $('#tagihan-search-input').addEventListener('input', (e) => {
       appState.billsFilter.searchTerm = e.target.value.toLowerCase();
       applyFilterAndSort();
@@ -7316,44 +7363,6 @@ function _getBillsListHTML(items) {
           </div>`;
       }).join('') })()}
   </div>`;
-}
-
-function _attachBillSwipeHandlers() {
-  if (appState.activePage !== 'tagihan') return;
-  // Hanya aktifkan swipe di perangkat sentuh
-  const isTouch = (('ontouchstart' in window) || (navigator.maxTouchPoints||0)>0);
-  if (!isTouch) return;
-  const items = $$('.dense-list-item');
-  items.forEach(item => {
-      let startX = 0;
-      let shown = false;
-      const actions = $('.swipe-actions', item);
-      const content = $('.item-main-content', item);
-      if (!actions || !content) return;
-      const hide = () => {
-          item.classList.remove('swipe-open');
-          shown = false;
-      };
-      const show = () => {
-          item.classList.add('swipe-open');
-          shown = true;
-      };
-      item.addEventListener('touchstart', e => {
-          startX = e.touches[0].clientX;
-      }, {
-          passive: true
-      });
-      item.addEventListener('touchmove', e => {
-          const dx = e.touches[0].clientX - startX;
-          if (dx < -30) show();
-          if (dx > 30) hide();
-      }, {
-          passive: true
-      });
-      document.addEventListener('click', ev => {
-          if (!item.contains(ev.target)) hide();
-      });
-  });
 }
 
 function _getEditFormFakturMaterialHTML(item) {
@@ -11534,39 +11543,45 @@ function removeBillRowFromUI(billId) {
 
 async function handleNavigation(navId, opts = {}) {
     // 1. Validasi: Jangan jalankan jika halaman sama atau sedang transisi
-    if (!navId || appState.activePage === navId || isPageTransitioning) return;
+    if (!navId || appState.activePage === navId || isPageTransitioning) {
+        return;
+    }
 
-    isPageTransitioning = true; // Kunci transisi, cegah klik ganda
+    isPageTransitioning = true;
     const container = document.querySelector('.page-container');
 
-    // 2. Tentukan arah animasi berdasarkan sumber pemicu
-    let exitClass = 'page-exit-to-left';    // Default keluar ke kiri
-    let enterClass = 'page-enter-from-right'; // Default masuk dari kanan
+    // KUNCI PERBAIKAN UTAMA:
+    // Langsung setel timer untuk membuka kunci di awal.
+    // Durasinya harus cukup untuk (animasi keluar + render konten + animasi masuk).
+    setTimeout(() => {
+        isPageTransitioning = false;
+    }, 450); // 200ms keluar + 200ms masuk + 50ms buffer
 
+    // 2. Tentukan arah animasi
+    let exitClass = 'page-exit-to-left';
+    let enterClass = 'page-enter-from-right';
+    
     if (opts.source === 'bottom' || opts.source === 'history') {
         const items = Array.from(document.querySelectorAll('#bottom-nav .nav-item, .sidebar-nav-item'));
         const fromIndex = items.findIndex(i => i.dataset.nav === appState.activePage);
         const toIndex = items.findIndex(i => i.dataset.nav === navId);
-
-        if (fromIndex > -1 && toIndex > -1) {
-            if (toIndex < fromIndex) { // Pindah ke item di sebelah kiri
-                exitClass = 'page-exit-to-right';
-                enterClass = 'page-enter-from-left';
-            }
-            // Jika pindah ke kanan, biarkan default
+        if (fromIndex > -1 && toIndex > -1 && toIndex < fromIndex) {
+            exitClass = 'page-exit-to-right';
+            enterClass = 'page-enter-from-left';
         }
-    } else if (opts.source === 'quick') { // Untuk aksi cepat di dashboard
+    } else if (opts.source === 'quick') {
         exitClass = 'page-exit-fade';
         enterClass = 'page-enter-fade';
     }
 
-    // Fungsi ini akan dijalankan SETELAH animasi keluar selesai
-    const performPageEnter = async () => {
-        // 3. Ganti Konten Halaman
+    // 3. Mulai animasi keluar
+    container.classList.add(exitClass);
+
+    // 4. Tunggu durasi animasi keluar, lalu ganti konten dan animasikan masuk
+    setTimeout(async () => {
+        // Ganti state dan konten halaman
         appState.activePage = navId;
         localStorage.setItem('lastActivePage', navId);
-
-        // Update state di History API jika ini bukan dari tombol back/forward
         if (opts.push !== false) {
             try {
                 history.pushState({ page: navId }, '', window.location.href);
@@ -11575,44 +11590,19 @@ async function handleNavigation(navId, opts = {}) {
         
         renderBottomNav();
         renderSidebar();
-        await renderPageContent(); // Ganti konten HTML
+        await renderPageContent();
 
-        // 4. Animasikan Halaman Baru Masuk
-        // a. Set state awal (di luar layar / transparan)
+        // Siapkan untuk animasi masuk
+        container.classList.remove('page-exit-to-left', 'page-exit-to-right', 'page-exit-fade');
         container.classList.add(enterClass);
 
-        // b. Tunggu sesaat agar browser menerapkan state awal di atas
+        // Paksa browser "melihat" state awal sebelum memulai transisi
         requestAnimationFrame(() => {
-            // c. Hapus kelas untuk memicu transisi ke state normal (terlihat di layar)
             container.classList.remove(enterClass);
         });
 
-        // 5. Selesaikan transisi setelah animasi masuk selesai
-        const onEnterDone = () => {
-            container.removeEventListener('transitionend', onEnterDone);
-            isPageTransitioning = false;
-        };
-        container.addEventListener('transitionend', onEnterDone, { once: true });
-    };
-
-    // 6. Jalankan Animasi Keluar
-    const onExitDone = () => {
-        container.removeEventListener('transitionend', onExitDone);
-        // Hapus semua kelas animasi keluar sebelum masuk
-        container.classList.remove('page-exit-to-left', 'page-exit-to-right', 'page-exit-fade');
-        performPageEnter();
-    };
-
-    container.addEventListener('transitionend', onExitDone, { once: true });
-    container.classList.add(exitClass);
-
-    setTimeout(() => {
-        if (isPageTransitioning) {
-            onExitDone();
-        }
-    }, 250); // Sedikit lebih lama dari durasi transisi
+    }, 200); // Durasi ini HARUS sama dengan durasi transisi CSS Anda
 }
-
 
 function MapsTo(pageId) {
     return handleNavigation(pageId, { source: 'map', push: true });
