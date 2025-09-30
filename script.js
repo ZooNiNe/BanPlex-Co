@@ -238,14 +238,16 @@ async function main() {
 // =======================================================
 const localDB = new Dexie('BanPlexLocalDB');
 
-localDB.version(61).stores({
+// [REVISI FINAL] Naikkan versi dan tambahkan semua index yang dibutuhkan
+localDB.version(65).stores({
     // Data Transaksi
-    expenses: '++localId, id, projectId, date, type, status, needsSync, isDeleted, attachmentNeedsSync',
-    bills: '++localId, id, expenseId, status, dueDate, type, needsSync, isDeleted',
-    incomes: '++localId, id, projectId, date, needsSync, isDeleted',
-    funding_sources: '++localId, id, creditorId, status, needsSync, isDeleted',
-    attendance_records: '++localId, id, workerId, date, isPaid, needsSync, isDeleted',
-    stock_transactions: '++localId, id, materialId, date, type, needsSync, isDeleted',
+    expenses: '&id, projectId, date, type, status, isDeleted, needsSync, attachmentNeedsSync', // <-- 'attachmentNeedsSync' ditambahkan
+    bills: '&id, expenseId, status, dueDate, type, isDeleted, needsSync',
+    incomes: '&id, projectId, date, isDeleted, needsSync',
+    funding_sources: '&id, creditorId, status, isDeleted, needsSync',
+    attendance_records: '&id, workerId, date, isPaid, isDeleted, needsSync',
+    stock_transactions: '&id, materialId, date, type, isDeleted, needsSync',
+    comments: '&id, parentId, parentType, createdAt, isDeleted, needsSync, [parentId+parentType]',
     files: 'id',
 
     // Master Data
@@ -265,12 +267,6 @@ localDB.version(61).stores({
     pending_logs: '++id, action, createdAt',
     pending_conflicts: '++id, table, docId'
 });
-
-// Tambah store untuk komentar pada versi berikutnya
-localDB.version(62).stores({
-    comments: '++localId, id, parentId, parentType, createdAt, needsSync, isDeleted, [parentId+parentType]' // <-- [OPTIMASI]
-});
-
 
 // =======================================================
 //      SEKSI 1.6: INISIALISASI FIREBASE
@@ -386,7 +382,17 @@ const centerTextPlugin = {
 };
 Chart.register(centerTextPlugin);
 
-// Generic SPA form helpers
+function _createFormGroupHTML(id, labelText, inputHTML) {
+    const inputWithId = inputHTML.includes(' id=') ? inputHTML : inputHTML.replace(/<(\w+)/, `<$1 id="${id}"`);
+
+    return `
+        <div class="form-group">
+            <label for="${id}">${labelText}</label>
+            ${inputWithId}
+        </div>
+    `;
+}
+
 function _serializeForm(form) {
     const fd = new FormData(form);
     const data = {};
@@ -1240,181 +1246,61 @@ async function syncToServer() {
     appState.isSyncing = true;
     toast('syncing', 'Mengirim perubahan ke server...');
     try {
-        // [PERBAIKAN] Definisikan tabel mana saja yang mendukung penghapusan offline
-        const tablesForDeletionSync = [
-            localDB.expenses, localDB.bills, localDB.incomes,
-            localDB.funding_sources, localDB.attendance_records, localDB.stock_transactions,
-            localDB.comments
-        ];
-
-        // --- 1. Sinkronisasi Penghapusan ---
-        // Hindari operasi jaringan di dalam transaksi Dexie untuk mencegah TransactionInactiveError
+        let totalSynced = 0;
+        
+        // --- Deletion Sync ---
+        const tablesForDeletionSync = [ localDB.expenses, localDB.bills, localDB.incomes, localDB.funding_sources, localDB.attendance_records, localDB.stock_transactions, localDB.comments ];
         for (const table of tablesForDeletionSync) {
             const itemsToDelete = await table.where('isDeleted').equals(1).toArray();
             if (itemsToDelete.length > 0) {
                 const deleteBatch = writeBatch(db);
-                const localIdsToDelete = [];
-                for (const item of itemsToDelete) {
-                    if (item.id) {
-                        deleteBatch.delete(doc(db, 'teams', TEAM_ID, table.name, item.id));
-                    }
-                    localIdsToDelete.push(item.localId);
-                }
-                try {
-                    await deleteBatch.commit();
-                } catch (e) {
-                    console.error(`Gagal menghapus di server untuk '${table.name}':`, e);
-                    continue; // Jangan hapus lokal jika gagal di server
-                }
-                await table.bulkDelete(localIdsToDelete);
-                console.log(`${itemsToDelete.length} item dari '${table.name}' berhasil dihapus.`);
+                const idsToDelete = itemsToDelete.map(item => item.id);
+                idsToDelete.forEach(id => {
+                    if (id) deleteBatch.delete(doc(db, 'teams', TEAM_ID, table.name, id));
+                });
+                await deleteBatch.commit();
+                await table.bulkDelete(idsToDelete);
+                totalSynced += itemsToDelete.length;
             }
         }
-        updateSyncIndicator();
         
-        // --- 2. Sinkronisasi Penambahan/Perubahan Data ---
-        let totalSynced = 0;
+        // --- Creation/Update Sync ---
         const collectionsToSync = ['expenses', 'bills', 'incomes', 'funding_sources', 'attendance_records', 'stock_transactions', 'comments'];
         for (const tableName of collectionsToSync) {
             const itemsToSync = await localDB[tableName].where('needsSync').equals(1).toArray();
             if (itemsToSync.length === 0) continue;
             const collectionRef = collection(db, 'teams', TEAM_ID, tableName);
             for (const item of itemsToSync) {
-                const {
-                    localId,
-                    needsSync,
-                    isDeleted,
-                    localAttachmentId,
-                    attachmentNeedsSync,
-                    serverRev,
-                    ...firestoreData
-                } = item;
+                const { needsSync, isDeleted, localAttachmentId, attachmentNeedsSync, serverRev, ...firestoreData } = item;
                 const id = firestoreData.id || generateUUID();
                 const docRef = doc(collectionRef, id);
-                try {
-                    await runTransaction(db, async (transaction) => {
-                        const snap = await transaction.get(docRef);
-                        const currentRev = snap.exists()?(snap.data().rev || 0) : 0;
-                        const baseRev = typeof serverRev === 'number'?serverRev : 0;
-                        if (snap.exists() && currentRev !== baseRev) {
-                            // Konflik: simpan ke antrean konflik dan jangan timpa data server
-                            await localDB.pending_conflicts.add({
-                                table: tableName,
-                                docId: id,
-                                localId,
-                                when: new Date(),
-                                serverRev: currentRev,
-                                baseRev,
-                                payload: firestoreData
-                            });
-                            // Jangan tandai sebagai tersinkron
-                            return;
-                        }
-                        const nextRev = currentRev + 1;
-                        const dataToWrite = { ...firestoreData,
-                            rev: nextRev,
-                            updatedAt: serverTimestamp(),
-                            id
-                        };
-                        transaction.set(docRef, dataToWrite);
-                    });
-                    await localDB[tableName].update(localId, {
-                        needsSync: 0,
-                        id,
-                        serverRev: (item.serverRev || 0) + 1
-                    });
-                    totalSynced += 1;
-                } catch (e) {
-                    console.error('Sync write failed for', tableName, id, e);
-                }
+                await runTransaction(db, async (transaction) => {
+                    const snap = await transaction.get(docRef);
+                    const dataToWrite = { ...firestoreData, updatedAt: serverTimestamp(), id };
+                    transaction.set(docRef, dataToWrite, { merge: true });
+                });
+                await localDB[tableName].update(id, { needsSync: 0 });
+                totalSynced += 1;
             }
         }
-        // --- [BARU] Fase 3: Sinkronisasi File Upload ---
+
+        // --- Attachment Sync ---
         const expensesWithFiles = await localDB.expenses.where('attachmentNeedsSync').equals(1).toArray();
-        if (expensesWithFiles.length > 0) {
-            console.log(`Mengunggah ${expensesWithFiles.length} file...`);
-            for (const expense of expensesWithFiles) {
-                if (!expense.id) continue; // Lewati jika belum punya ID Firestore
-                const fileRecord = await localDB.files.get(expense.localAttachmentId);
-                if (fileRecord && fileRecord.file) {
-                    const downloadURL = await _uploadFileToCloudinary(fileRecord.file); // Menggunakan fungsi Cloudinary Anda
-                    if (downloadURL) {
-                        await updateDoc(doc(expensesCol, expense.id), {
-                            attachmentUrl: downloadURL
-                        });
-                        await localDB.expenses.update(expense.localId, {
-                            attachmentNeedsSync: 0,
-                            attachmentUrl: downloadURL
-                        });
-                        await localDB.files.delete(expense.localAttachmentId); // Hapus file dari cache lokal
-                    }
-                }
-            }
+        for (const expense of expensesWithFiles) {
+             if (!expense.id) continue;
+             const fileRecord = await localDB.files.get(expense.localAttachmentId);
+             if (fileRecord && fileRecord.file) {
+                 const downloadURL = await _uploadFileToCloudinary(fileRecord.file);
+                 if (downloadURL) {
+                     await updateDoc(doc(expensesCol, expense.id), { attachmentUrl: downloadURL });
+                     await localDB.expenses.update(expense.id, { attachmentNeedsSync: 0, attachmentUrl: downloadURL });
+                     await localDB.files.delete(expense.localAttachmentId);
+                 }
+             }
         }
-        // --- [BARU] Fase 4: Sinkronisasi Riwayat Pembayaran Offline ---
-        try {
-            const pendingPayments = await localDB.pending_payments.toArray();
-            for (const p of pendingPayments) {
-                try {
-                    const billRef = doc(billsCol, p.billId);
-                    let attachmentUrl = null;
-                    if (p.localAttachmentId) {
-                        try {
-                            const fileRecord = await localDB.files.get(p.localAttachmentId);
-                            if (fileRecord && fileRecord.file) {
-                                attachmentUrl = await _uploadFileToCloudinary(fileRecord.file);
-                                await localDB.files.delete(p.localAttachmentId);
-                            }
-                        } catch (uplErr) {
-                            console.warn('Gagal upload lampiran pembayaran offline:', uplErr);
-                        }
-                    }
-                    const data = {
-                        amount: p.amount,
-                        date: p.date?new Date(p.date) : new Date(),
-                        ...(p.workerId?{
-                            workerId: p.workerId
-                        } : {}),
-                        ...(p.workerName?{
-                            workerName: p.workerName
-                        } : {}),
-                        createdAt: serverTimestamp()
-                    };
-                    if (attachmentUrl) data.attachmentUrl = attachmentUrl;
-                    await addDoc(collection(billRef, 'payments'), data);
-                    await localDB.pending_payments.delete(p.id);
-                    totalSynced += 1;
-                } catch (e) {
-                    console.error('Gagal sinkron pembayaran offline:', p, e);
-                }
-            }
-        } catch (e) {
-            console.error('Gagal membaca antrean pembayaran offline:', e);
-        }
-        // --- [BARU] Fase 5: Sinkronisasi Log Aktivitas Offline ---
-        try {
-            const queuedLogs = await localDB.pending_logs.toArray();
-            for (const l of queuedLogs) {
-                try {
-                    await addDoc(logsCol, {
-                        action: l.action,
-                        details: l.details,
-                        userId: l.userId,
-                        userName: l.userName,
-                        createdAt: serverTimestamp()
-                    });
-                    await localDB.pending_logs.delete(l.id);
-                    totalSynced += 1;
-                } catch (e) {
-                    console.error('Gagal sinkron log offline:', l, e);
-                }
-            }
-        } catch (e) {
-            console.error('Gagal membaca antrean log offline:', e);
-        }
+        
         if (totalSynced > 0) {
             toast('success', `${totalSynced} item berhasil disinkronkan.`);
-            await syncFromServer(); // Ambil data final dari server
         } else {
             hideToast();
         }
@@ -1425,7 +1311,8 @@ async function syncToServer() {
         appState.isSyncing = false;
         updateSyncIndicator();
     }
-}
+  }
+  
 window.addEventListener('online', syncToServer);
 
 async function _uploadFileToFirebaseStorage(file, folder = 'attachments') {
@@ -2322,54 +2209,47 @@ async function handleDeletePendingItem(ds) {
 //          SEKSI 2.5: FUNGSI MODAL & AUTENTIKASI
 // =======================================================
 function createModal(type, data = {}) {
-  let modalContainer = $('#modal-container');
-  // Fallback: buat container jika belum ada (meningkatkan robustness di semua halaman)
-  if (!modalContainer) {
-    modalContainer = document.createElement('div');
-    modalContainer.id = 'modal-container';
-    document.body.appendChild(modalContainer);
+    let modalContainer = $('#modal-container');
+    if (!modalContainer) {
+      modalContainer = document.createElement('div');
+      modalContainer.id = 'modal-container';
+      document.body.appendChild(modalContainer);
+    }
+  
+    const modalEl = document.createElement('div');
+    modalEl.id = `${type}-modal`;
+    modalEl.className = 'modal-bg';
+    modalEl.innerHTML = getModalContent(type, data);
+    modalContainer.appendChild(modalEl);
+  
+    setTimeout(() => modalEl.classList.add('show'), 10);
+  
+    try {
+        if ('pushState' in history) {
+            // [REVISI MODAL] Cek state saat ini sebelum push
+            if (history.state && history.state.modal === true) {
+                // Jika sudah ada modal terbuka, ganti state saat ini, jangan tambah baru
+                history.replaceState({ page: appState.activePage, modal: true, id: modalEl.id }, '', window.location.href);
+            } else {
+                // Jika tidak ada modal, baru tambahkan state baru
+                history.pushState({ page: appState.activePage, modal: true, id: modalEl.id }, '', window.location.href);
+            }
+        }
+    } catch(_) {}
+  
+    const closeModalFunc = () => {
+        closeModal(modalEl);
+        if (data.onClose) data.onClose();
+    };
+  
+    modalEl.addEventListener('click', e => {
+        if (e.target === modalEl) closeModalFunc();
+    });
+    modalEl.querySelectorAll('[data-close-modal]').forEach(btn => btn.addEventListener('click', closeModalFunc));
+  
+    attachModalEventListeners(type, data, closeModalFunc);
+    return modalEl;
   }
-
-  // Langkah 1: Buat elemen <div> baru untuk modal.
-  // Ini adalah langkah kunci untuk menghindari penghapusan modal lain.
-  const modalEl = document.createElement('div');
-  modalEl.id = `${type}-modal`;
-  modalEl.className = 'modal-bg';
-
-  // Langkah 2: Isi elemen yang baru dibuat dengan konten modal.
-  modalEl.innerHTML = getModalContent(type, data);
-
-  // Langkah 3: GUNAKAN appendChild. Ini akan MENAMBAHKAN modal baru
-  // di atas modal lama, bukan menggantinya.
-  modalContainer.appendChild(modalEl);
-
-  // Tampilkan modal dengan animasi
-  setTimeout(() => modalEl.classList.add('show'), 10);
-
-  // Dorong entri history agar tombol/gestur Back menutup modal terlebih dahulu
-  try {
-      if ('pushState' in history) {
-          history.pushState({ page: appState.activePage, modal: true, id: modalEl.id }, '', window.location.href);
-      }
-  } catch(_) {}
-
-  // Buat fungsi penutup yang spesifik untuk modal ini
-  const closeModalFunc = () => {
-      // Gunakan history-aware close; popstate handler akan menutup aktual
-      closeModal(modalEl);
-      if (data.onClose) data.onClose();
-  };
-
-  // Pasang event listener untuk menutup modal
-  modalEl.addEventListener('click', e => {
-      if (e.target === modalEl) closeModalFunc();
-  });
-  modalEl.querySelectorAll('[data-close-modal]').forEach(btn => btn.addEventListener('click', closeModalFunc));
-
-  attachModalEventListeners(type, data, closeModalFunc);
-  // Kembalikan elemen modal agar bisa dimanipulasi jika perlu
-  return modalEl;
-}
 
 function closeModal(modalEl) {
   if (!modalEl) return;
@@ -6725,12 +6605,17 @@ async function _renderTagihanContent() {
     const tabId = $('#main-tabs-container .sub-nav-item.active')?.dataset.tab || 'unpaid';
     const contentContainer = $("#sub-page-content");
     if (contentContainer) contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+    
     appState.expenses = await localDB.expenses.where('isDeleted').notEqual(1).toArray();
-
     const billsFromCache = await localDB.bills.where('status').equals(tabId).toArray();
+
+    const billedExpenseIds = new Set(billsFromCache.map(b => b.expenseId).filter(Boolean));
+
     let deliveryOrders = [];
     if (tabId === 'unpaid') {
-        const doFromCache = appState.expenses.filter(e => e.status === 'delivery_order');
+        const doFromCache = appState.expenses.filter(e => 
+            e.status === 'delivery_order' && !billedExpenseIds.has(e.id)
+        );
         deliveryOrders = doFromCache.map(d => ({
             id: `expense-${d.id}`, expenseId: d.id, description: d.description, amount: 0,
             dueDate: d.date, status: 'delivery_order', type: d.type,
@@ -6755,38 +6640,93 @@ async function _renderTagihanContent() {
     _renderFilteredAndPaginatedBills();
 }
 
-function _renderFilteredAndPaginatedBills() {
-    let filtered = [...(appState.tagihan.fullList || [])];
-
-    const categoryId = appState.billsFilter.category;
-    if (categoryId !== 'all') filtered = filtered.filter(item => item.type === categoryId);
-    if (appState.billsFilter.projectId !== 'all') filtered = filtered.filter(item => item.projectId === appState.billsFilter.projectId);
-    if (appState.billsFilter.supplierId !== 'all') {
-         filtered = filtered.filter(item => {
-            const expense = appState.expenses.find(e => e.id === item.expenseId);
-            return expense && expense.supplierId === appState.billsFilter.supplierId;
-        });
-    }
-    if (appState.billsFilter.searchTerm) {
-        const term = appState.billsFilter.searchTerm.toLowerCase();
-        filtered = filtered.filter(item => (item.description || '').toLowerCase().includes(term));
-    }
-
-    filtered.sort((a, b) => {
-        const valA = (appState.billsFilter.sortBy === 'amount') ? a.amount : _getJSDate(a.dueDate).getTime();
-        const valB = (appState.billsFilter.sortBy === 'amount') ? b.amount : _getJSDate(b.dueDate).getTime();
-        return appState.billsFilter.sortDirection === 'asc' ? valA - valB : valB - valA;
-    });
-    
-    appState.tagihan.currentList = filtered;
-
+async function _renderFilteredAndPaginatedBills(loadMore = false) {
+    const PAGE_SIZE = 20;
     const contentContainer = $("#sub-page-content");
-    if (!contentContainer) return;
-    
-    contentContainer.innerHTML = `<div class="dense-list-container">${_getBillsListHTML(filtered)}</div>`;
+    const pagination = appState.pagination.bills;
 
-    if (!contentContainer.querySelector('.dense-list-item')) {
-        contentContainer.innerHTML = _getEmptyStateHTML({title: 'Tidak Ada Tagihan', desc: 'Tidak ada tagihan yang cocok.'});
+    if (pagination.isLoading || (loadMore && !pagination.hasMore)) return;
+
+    pagination.isLoading = true;
+
+    if (!loadMore) {
+        contentContainer.innerHTML = '<div class="loader-container"><div class="spinner"></div></div>';
+        appState.tagihan.currentList = [];
+    } else {
+        const loader = document.createElement('div');
+        loader.className = 'loader-container';
+        loader.id = 'load-more-spinner';
+        loader.innerHTML = '<div class="spinner"></div>';
+        contentContainer.appendChild(loader);
+    }
+
+    try {
+        const uniqueMap = new Map();
+        (appState.tagihan.fullList || []).forEach(item => {
+            const uniqueKey = item.id || `expense-${item.expenseId}`;
+            if (!uniqueMap.has(uniqueKey)) {
+                uniqueMap.set(uniqueKey, item);
+            }
+        });
+        let filteredBills = Array.from(uniqueMap.values());
+
+        const { searchTerm, projectId, supplierId, category, sortBy, sortDirection } = appState.billsFilter;
+
+        if (category !== 'all') filteredBills = filteredBills.filter(item => item.type === category);
+        if (projectId !== 'all') filteredBills = filteredBills.filter(item => item.projectId === projectId);
+        
+        const allExpenses = await localDB.expenses.where('isDeleted').notEqual(1).toArray();
+        if (supplierId !== 'all') {
+            filteredBills = filteredBills.filter(item => {
+                const expense = allExpenses.find(e => e.id === item.expenseId);
+                return expense && expense.supplierId === supplierId;
+            });
+        }
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase();
+            filteredBills = filteredBills.filter(item => (item.description || '').toLowerCase().includes(term));
+        }
+
+        filteredBills.sort((a, b) => {
+            const valA = (sortBy === 'amount') ? a.amount : _getJSDate(a.dueDate).getTime();
+            const valB = (sortBy === 'amount') ? b.amount : _getJSDate(b.dueDate).getTime();
+            return sortDirection === 'asc' ? valA - valB : valB - valA;
+        });
+        
+        const offset = loadMore ? appState.tagihan.currentList.length : 0;
+        const pageOfBills = filteredBills.slice(offset, offset + PAGE_SIZE);
+
+        const allSuppliers = await localDB.suppliers.toArray();
+        const allWorkers = await localDB.workers.toArray();
+        const newHtml = _getBillsListHTML(pageOfBills, allExpenses, allSuppliers, allWorkers);
+
+        if (loadMore) {
+            const spinner = $('#load-more-spinner');
+            if (spinner) spinner.remove();
+            contentContainer.querySelector('.dense-list-container').insertAdjacentHTML('beforeend', newHtml);
+        } else {
+            contentContainer.innerHTML = `<div class="dense-list-container">${newHtml}</div>`;
+        }
+        
+        if (loadMore) {
+             appState.tagihan.currentList.push(...pageOfBills);
+        } else {
+             appState.tagihan.currentList = pageOfBills;
+        }
+        
+        pagination.hasMore = pageOfBills.length === PAGE_SIZE;
+
+        if (!loadMore && pageOfBills.length === 0) {
+            contentContainer.innerHTML = _getEmptyStateHTML({ title: 'Tidak Ada Tagihan', desc: 'Tidak ada tagihan yang cocok dengan filter Anda.' });
+        }
+
+    } catch (error) {
+        console.error("Gagal memuat tagihan secara bertahap:", error);
+        contentContainer.innerHTML = _getEmptyStateHTML({ icon: 'error', title: 'Gagal Memuat Data' });
+    } finally {
+        pagination.isLoading = false;
+        const spinner = $('#load-more-spinner');
+        if (spinner) spinner.remove();
     }
 }
 
@@ -7408,14 +7348,15 @@ function _createPaymentHistoryHTML(payments) {
 }
 
 async function _showBillsFilterModal(onApply) {
-    // [PERBAIKAN KUNCI] Ambil data terbaru langsung dari database lokal di sini
     const activeTab = $('#main-tabs-container .sub-nav-item.active')?.dataset.tab || 'unpaid';
     const currentBillList = await localDB.bills.where('status').equals(activeTab).toArray();
     const allExpenses = await localDB.expenses.where('isDeleted').notEqual(1).toArray();
+    
+    // [REVISI] Ambil data supplier terbaru langsung dari localDB
+    const allSuppliers = await localDB.suppliers.toArray();
 
     const relevantSupplierIds = new Set();
     currentBillList.forEach(bill => {
-        // Cari di daftar 'allExpenses' yang baru saja kita ambil
         const expense = allExpenses.find(e => e.id === bill.expenseId);
         if (expense && expense.supplierId) {
             relevantSupplierIds.add(expense.supplierId);
@@ -7424,9 +7365,8 @@ async function _showBillsFilterModal(onApply) {
 
     const projectOptions = [{ value: 'all', text: 'Semua Proyek' }, ...appState.projects.map(p => ({ value: p.id, text: p.projectName }))];
     
-    // Gunakan data supplier dari state, tapi filter berdasarkan ID yang relevan
     const supplierOptions = [{ value: 'all', text: 'Semua Supplier' }, 
-        ...appState.suppliers
+        ...allSuppliers // <-- Gunakan data yang baru diambil
             .filter(s => relevantSupplierIds.has(s.id))
             .map(s => ({ value: s.id, text: s.supplierName }))
     ];
@@ -8354,67 +8294,73 @@ async function renderSimulasiBayarPage() {
     _setActiveListeners([]);
 }
 
+// GANTI SELURUH FUNGSI INI DENGAN VERSI BARU
 function _openSimulasiItemActionsModal(dataset) {
-  const {
-      id,
-      title,
-      description,
-      fullAmount,
-      partialAllowed
-  } = dataset;
-  const isSelected = appState.simulasiState.selectedPayments.has(id);
-  const actions = [];
-  if (isSelected) {
-      actions.push({
-          label: 'Batalkan Pilihan',
-          action: 'cancel',
-          icon: 'cancel'
-      });
-  } else {
-      actions.push({
-          label: 'Pilih & Bayar Penuh',
-          action: 'pay_full',
-          icon: 'check_circle'
-      });
-      if (partialAllowed === 'true') {
-          actions.push({
-              label: 'Bayar Sebagian',
-              action: 'pay_partial',
-              icon: 'pie_chart'
-          });
-      }
+    const {
+        id,
+        title,
+        description,
+        fullAmount,
+        partialAllowed
+    } = dataset;
+    const isSelected = appState.simulasiState.selectedPayments.has(id);
+    const actions = [];
+    if (isSelected) {
+        actions.push({
+            label: 'Batalkan Pilihan',
+            action: 'cancel',
+            icon: 'cancel'
+        });
+    } else {
+        actions.push({
+            label: 'Pilih & Bayar Penuh',
+            action: 'pay_full',
+            icon: 'check_circle'
+        });
+        if (partialAllowed === 'true') {
+            actions.push({
+                label: 'Bayar Sebagian',
+                action: 'pay_partial',
+                icon: 'pie_chart'
+            });
+        }
+    }
+    const modal = createModal('billActionsModal', {
+        bill: {
+            description: title,
+            amount: parseFormattedNumber(fullAmount)
+        },
+        actions
+    });
+  
+    // Tambahkan event listener ke tombol aksi di dalam modal
+    modal.querySelectorAll('.actions-menu-item').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = $(`.simulasi-item[data-id="${id}"]`);
+            if (!card) return;
+  
+            switch (btn.dataset.action) {
+                case 'pay_full':
+                    appState.simulasiState.selectedPayments.set(id, parseFormattedNumber(fullAmount));
+                    card.classList.add('selected');
+                    break;
+                
+                case 'pay_partial':
+                    _openSimulasiPartialPaymentModal(dataset);
+                    return; // Keluar dari fungsi agar closeModal() di bawah tidak dijalankan
+  
+                case 'cancel':
+                    appState.simulasiState.selectedPayments.delete(id);
+                    card.classList.remove('selected');
+                    break;
+            }
+            
+            _updateSimulasiTotals();
+            closeModal(modal); // Baris ini HANYA akan dijalankan untuk 'pay_full' dan 'cancel'
+        });
+    });
   }
-  const modal = createModal('billActionsModal', {
-      bill: {
-          description: title,
-          amount: parseFormattedNumber(fullAmount)
-      },
-      actions
-  });
-  // Menambahkan event listener ke tombol aksi di dalam modal
-  modal.querySelectorAll('.actions-menu-item').forEach(btn => {
-      btn.addEventListener('click', () => {
-          const card = $(`.simulasi-item[data-id="${id}"]`);
-          if (!card) return;
-          switch (btn.dataset.action) {
-              case 'pay_full':
-                  appState.simulasiState.selectedPayments.set(id, parseFormattedNumber(fullAmount));
-                  card.classList.add('selected');
-                  break;
-              case 'pay_partial':
-                  // Panggil modal untuk input pembayaran parsial
-                  _openSimulasiPartialPaymentModal(dataset);
-                  break;
-              case 'cancel':
-                  appState.simulasiState.selectedPayments.delete(id);
-                  card.classList.remove('selected');
-                  break;
-          }
-          _updateSimulasiTotals();
-          closeModal(modal); // Tutup modal aksi setelah aksi dipilih
-      });
-  });
-}
+
 
 function _openSimulasiPartialPaymentModal(dataset) {
   const {
@@ -8429,11 +8375,12 @@ function _openSimulasiPartialPaymentModal(dataset) {
               <div class="payment-summary" style="margin-bottom: 1rem;">
                   <div class="remaining"><span>Total Tagihan:</span><strong>${fmtIDR(fullAmountNum)}</strong></div>
               </div>
-              <div class="form-group">
-                  <label>Jumlah Pembayaran Parsial</label>
-                  <input type="text" name="amount" inputmode="numeric" required placeholder="mis. 500.000">
-              </div>
-              <div class="modal-footer" style="margin-top: 1.5rem;">
+              ${_createFormGroupHTML(
+                'partial-payment-amount',
+                'Jumlah Pembayaran Parsial',
+                '<input type="text" name="amount" inputmode="numeric" required placeholder="mis. 500.000">'
+            )}
+                          <div class="modal-footer" style="margin-top: 1.5rem;">
                   <button type="button" class="btn btn-secondary" data-close-modal>Batal</button>
                   <button type="submit" class="btn btn-primary">Simpan</button>
               </div>
@@ -11004,144 +10951,89 @@ async function handleEditItem(id, type) {
         }
     }
 }
+
 async function handleUpdateItem(form) {
-    const {
-        id,
-        type
-    } = form.dataset;
+    const { id, type } = form.dataset;
     toast('syncing', 'Memperbarui data di perangkat...');
     try {
-        let table;
-        let dataToUpdate = {};
-        let config; // Untuk logging
-        // Menggunakan switch-case agar lebih terstruktur untuk berbagai tipe data
+        let table, dataToUpdate = {}, config = { title: 'Data' }, stateKey;
+
         switch (type) {
             case 'termin':
-                table = localDB.incomes;
-                config = {
-                    title: 'Pemasukan Termin'
-                };
-                dataToUpdate = {
-                    amount: parseFormattedNumber(form.elements.amount.value),
-                    date: Timestamp.fromDate(new Date(form.elements.date.value)),
-                    projectId: form.elements.projectId.value,
-                };
+                table = localDB.incomes; stateKey = 'incomes'; config.title = 'Pemasukan Termin';
+                dataToUpdate = { amount: parseFormattedNumber(form.elements.amount.value), date: new Date(form.elements.date.value), projectId: form.elements.projectId.value };
                 break;
             case 'pinjaman':
-                table = localDB.funding_sources;
-                config = {
-                    title: 'Pinjaman'
-                };
-                dataToUpdate = {
-                    totalAmount: parseFormattedNumber(form.elements.totalAmount.value),
-                    date: Timestamp.fromDate(new Date(form.elements.date.value)),
-                    creditorId: form.elements.creditorId.value,
-                    interestType: form.elements.interestType.value
-                };
+                table = localDB.funding_sources; stateKey = 'fundingSources'; config.title = 'Pinjaman';
+                dataToUpdate = { totalAmount: parseFormattedNumber(form.elements.totalAmount.value), date: new Date(form.elements.date.value), creditorId: form.elements.creditorId.value, interestType: form.elements.interestType.value };
                 if (dataToUpdate.interestType === 'interest') {
                     dataToUpdate.rate = Number(form.elements.rate.value);
                     dataToUpdate.tenor = Number(form.elements.tenor.value);
                     dataToUpdate.totalRepaymentAmount = dataToUpdate.totalAmount * (1 + (dataToUpdate.rate / 100 * dataToUpdate.tenor));
-                } else {
-                    dataToUpdate.rate = null;
-                    dataToUpdate.tenor = null;
-                    dataToUpdate.totalRepaymentAmount = null;
                 }
                 break;
-
             case 'fee_bill':
-                table = localDB.bills;
-                config = {
-                    title: 'Tagihan Fee'
-                };
-                dataToUpdate = {
-                    description: form.elements.description.value.trim(),
-                    amount: parseFormattedNumber(form.elements.amount.value),
-                };
+                table = localDB.bills; stateKey = 'bills'; config.title = 'Tagihan Fee';
+                dataToUpdate = { description: form.elements.description.value.trim(), amount: parseFormattedNumber(form.elements.amount.value) };
                 break;
             case 'expense':
-                table = localDB.expenses;
-                config = {
-                    title: 'Pengeluaran'
-                };
-
-                // Cek apakah ini form material atau expense biasa
+                table = localDB.expenses; stateKey = 'expenses'; config.title = 'Pengeluaran';
                 if (form.querySelector('#invoice-items-container')) {
                     const items = [];
                     $$('.invoice-item-row', form).forEach(row => {
-                        const name = row.querySelector('input[name="itemName"]').value;
-                        const price = parseFormattedNumber(row.querySelector('input[name="itemPrice"]').value);
-                        const qty = Number(row.querySelector('input[name="itemQty"]').value);
                         const materialId = row.querySelector('input[name="materialId"]')?.value || null;
-                        if (name && price > 0 && qty > 0) {
+                        if (materialId) {
                             items.push({
-                                name,
-                                price,
-                                qty,
-                                total: price * qty,
+                                name: row.querySelector('input[name="itemName"]').value,
+                                price: parseFormattedNumber(row.querySelector('input[name="itemPrice"]').value),
+                                qty: parseLocaleNumber(row.querySelector('input[name="itemQty"]').value),
+                                total: parseFormattedNumber(row.querySelector('input[name="itemPrice"]').value) * parseLocaleNumber(row.querySelector('input[name="itemQty"]').value),
                                 materialId
                             });
                         }
                     });
-
                     if (items.length === 0) throw new Error('Faktur harus memiliki minimal satu barang.');
-                    dataToUpdate = {
-                        projectId: form.elements['project-id'].value,
-                        supplierId: form.elements['supplier-id'].value,
-                        description: form.elements.description.value,
-                        date: Timestamp.fromDate(new Date(form.elements.date.value)),
-                        items: items,
-                        amount: items.reduce((sum, item) => sum + item.total, 0)
-                    };
+                    dataToUpdate = { projectId: form.elements['project-id'].value, supplierId: form.elements['supplier-id'].value, description: form.elements.description.value, date: new Date(form.elements.date.value), items: items, amount: items.reduce((sum, item) => sum + item.total, 0) };
                 } else {
-                    dataToUpdate = {
-                        amount: parseFormattedNumber(form.elements.amount.value),
-                        description: form.elements.description.value,
-                        date: Timestamp.fromDate(new Date(form.elements.date.value)),
-                        categoryId: form.elements.categoryId?.value || ''
-                    };
+                    dataToUpdate = { amount: parseFormattedNumber(form.elements.amount.value), description: form.elements.description.value, date: new Date(form.elements.date.value), categoryId: form.elements.categoryId?.value || '' };
                 }
                 break;
-            default:
-                toast('error', 'Tipe data untuk update tidak dikenal.');
-                return;
-        }
-        const itemsToUpdate = await table.where('id').equals(id).toArray();
-        if (itemsToUpdate.length > 0) {
-            const localId = itemsToUpdate[0].localId;
-            // Tandai data ini perlu disinkronkan ke server
-            await table.update(localId, { ...dataToUpdate,
-                needsSync: 1
-            });
-            // Jika yang diupdate adalah 'expense', kita juga harus update 'bill' yang terkait
-            if (type === 'expense') {
-                const relatedBill = await localDB.bills.where('expenseId').equals(id).first();
-                if (relatedBill) {
-                    await localDB.bills.update(relatedBill.localId, {
-                        description: dataToUpdate.description,
-                        amount: dataToUpdate.amount,
-                        dueDate: dataToUpdate.date,
-                        needsSync: 1 // Tandai tagihan juga untuk disinkronkan
-                    });
-                }
-            }
-        } else {
-            throw new Error("Item tidak ditemukan di database lokal untuk diperbarui.");
+            default: throw new Error('Tipe data untuk update tidak dikenal.');
         }
 
-        _logActivity(`Memperbarui Data (Lokal): ${config.title}`, {
-            docId: id
-        });
-        toast('success', 'Data berhasil diperbarui di perangkat!');
-        // Muat ulang state dari localDB, render ulang halaman, dan coba sinkronisasi
-        await loadAllLocalDataToState();
+        await table.update(id, { ...dataToUpdate, needsSync: 1 });
+
+        if (stateKey && appState[stateKey]) {
+            const itemIndex = appState[stateKey].findIndex(item => item.id === id);
+            if (itemIndex > -1) {
+                appState[stateKey][itemIndex] = { ...appState[stateKey][itemIndex], ...dataToUpdate };
+            }
+        }
+        
+        if (type === 'expense') {
+            const relatedBill = await localDB.bills.where('expenseId').equals(id).first();
+            if (relatedBill) {
+                const billUpdateData = { description: dataToUpdate.description, amount: dataToUpdate.amount, dueDate: dataToUpdate.date, needsSync: 1 };
+                await localDB.bills.update(relatedBill.id, billUpdateData);
+                const billIndex = appState.bills.findIndex(b => b.id === relatedBill.id);
+                if (billIndex > -1) {
+                    appState.bills[billIndex] = { ...appState.bills[billIndex], ...billUpdateData };
+                }
+            }
+        }
+        
+        _logActivity(`Memperbarui Data (Lokal): ${config.title}`, { docId: id });
+        toast('success', 'Perubahan berhasil disimpan!');
+        
         renderPageContent();
         syncToServer();
+
     } catch (error) {
         toast('error', `Gagal memperbarui data: ${error.message}`);
         console.error('Update error:', error);
     }
-}
+  }
+
 async function handleDeleteItem(id, type) {
     createModal('confirmDelete', {
         onConfirm: async () => {
